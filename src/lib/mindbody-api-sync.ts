@@ -211,6 +211,7 @@ export async function syncMindbodySchedules(
       }
     });
 
+    const currentMbIds = new Set(appointments.map((a) => String(a.Id)));
     let batch = writeBatch(db);
     let batchCount = 0;
 
@@ -219,7 +220,8 @@ export async function syncMindbodySchedules(
         const mbId = String(appt.Id);
 
         const trainer = targetTrainers.find(
-          (t) => String(t.mindbodyStaffId) === String(appt.StaffId),
+          (t) =>
+            String(t.mindbodyStaffId).trim() === String(appt.StaffId).trim(),
         );
 
         const trainerName = trainer
@@ -296,6 +298,22 @@ export async function syncMindbodySchedules(
         }
       } catch (apptErr: any) {
         result.errors.push(`Appt ${appt.Id}: ${apptErr.message}`);
+      }
+    }
+
+    for (const [mbId, existing] of Object.entries(existingByMbId)) {
+      if (!currentMbIds.has(mbId) && existing.data.status !== "Cancelled") {
+        batch.update(doc(db, "schedules", existing.docId), {
+          status: "Cancelled",
+          lastSyncAt: Timestamp.now(),
+        });
+        result.updated++;
+        batchCount++;
+        if (batchCount >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          batchCount = 0;
+        }
       }
     }
 

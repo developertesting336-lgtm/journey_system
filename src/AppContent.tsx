@@ -573,15 +573,27 @@ export default function AppContent({
   const handleRefreshSchedule = async () => {
     setIsRefreshingSchedule(true);
     try {
-      const { executeFrontendMasterSync } = await import("./lib/frontend-sync");
-      await executeFrontendMasterSync(
-        null,
-        false,
+      const activeStudio = studios.find((s) => s.id === activeStudioId);
+      const siteId = activeStudio?.mindbodySiteId
+        ? String(activeStudio.mindbodySiteId)
+        : "-99";
+
+      const { syncMindbodySchedules } = await import("./lib/mindbody-api-sync");
+      const res = await syncMindbodySchedules(
+        siteId,
         trainers,
-        liveRosterClients,
+        clients,
         studios,
       );
-      console.log("Schedule refresh result: completed on frontend.");
+
+      if (res.errors && res.errors.length > 0) {
+        toastError(`Sync completed with issues: ${res.errors[0]}`);
+      } else {
+        toastSuccess(
+          `Schedule refreshed: ${res.added} added, ${res.updated} updated.`,
+        );
+      }
+      console.log("Schedule refresh result:", res);
     } catch (error: any) {
       console.error("Failed to refresh schedule:", error);
       toastError("Failed to refresh schedule: " + error.message);

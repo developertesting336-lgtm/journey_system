@@ -43,6 +43,35 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
     }
   }, [isOpen, activeStudioId]);
 
+  const [mindbodyStaffId, setMindbodyStaffId] = useState("");
+  const [fetchingStaff, setFetchingStaff] = useState(false);
+  const [staffOptions, setStaffOptions] = useState<{ id: string; fullName: string; email: string }[]>([]);
+
+  const handleFetchStaff = async () => {
+    setFetchingStaff(true);
+    try {
+      const homeStudio = availableStudios.find((s) => s.id === primaryHomeStudioId);
+      const siteId = homeStudio?.mindbodySiteId ? String(homeStudio.mindbodySiteId) : "-99";
+
+      const res = await fetch("/api/mindbody/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`API returned status ${res.status}`);
+      }
+
+      const data = await res.json();
+      setStaffOptions(data.staff || []);
+    } catch (err: any) {
+      toastError("Failed to fetch staff list: " + err.message);
+    } finally {
+      setFetchingStaff(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!fullName || !initials || !primaryHomeStudioId) return;
 
@@ -58,7 +87,8 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
       primaryHomeStudioId,
       accessibleStudioIds: [primaryHomeStudioId],
       systemStatus: "active",
-    };
+      mindbodyStaffId: mindbodyStaffId.trim() || undefined,
+    } as any;
 
     // Strict validation
     if (!payload.fullName) {
@@ -86,6 +116,7 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
     setFullName("");
     setInitials("");
     setIsOwner(false);
+    setMindbodyStaffId("");
     setPrimaryHomeStudioId(activeStudioId || "");
     onOpenChange(false);
   };
@@ -157,6 +188,58 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-widest">
+                Mindbody Staff ID
+              </Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleFetchStaff}
+                disabled={fetchingStaff}
+                className="h-7 text-[10px] font-black uppercase text-indigo-500 hover:text-indigo-600 px-2"
+              >
+                {fetchingStaff ? "Fetching..." : "Lookup from Mindbody"}
+              </Button>
+            </div>
+            {staffOptions.length > 0 ? (
+              <Select
+                value={mindbodyStaffId}
+                onValueChange={(val) => {
+                  setMindbodyStaffId(val);
+                  const selected = staffOptions.find((s) => s.id === val);
+                  if (selected && !fullName) {
+                    setFullName(selected.fullName);
+                    const parts = selected.fullName.split(" ");
+                    if (parts.length > 1) {
+                      setInitials((parts[0][0] + parts[parts.length - 1][0]).toUpperCase());
+                    }
+                  }
+                }}
+              >
+                <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 text-sm font-bold">
+                  <SelectValue placeholder="Select Mindbody Staff..." />
+                </SelectTrigger>
+                <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white max-h-60">
+                  {staffOptions.map((s) => (
+                    <SelectItem key={s.id} value={s.id} className="font-bold">
+                      {s.fullName} (ID: {s.id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={mindbodyStaffId}
+                onChange={(e) => setMindbodyStaffId(e.target.value.replace(/[^0-9]/g, ""))}
+                className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 font-mono text-sm"
+                placeholder="e.g. 100000123"
+              />
+            )}
           </div>
 
           <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">

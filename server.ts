@@ -313,6 +313,57 @@ async function startServer() {
     }
   });
 
+  app.post("/api/mindbody/staff", async (req, res) => {
+    try {
+      const mindbodyApiKey = process.env.MINDBODY_API_KEY;
+      if (!mindbodyApiKey) {
+        return res
+          .status(500)
+          .json({ error: "MINDBODY_API_KEY environment variable is not set." });
+      }
+
+      const siteId = req.body.siteId || "-99";
+
+      const apiResponse = await fetch(
+        `https://api.mindbodyonline.com/public/v6/staff/staff?Limit=200`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Api-Key": mindbodyApiKey,
+            SiteId: String(siteId),
+          },
+        },
+      );
+
+      if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        console.error("Mindbody Fetch Staff Error:", apiResponse.status, errorText);
+        return res
+          .status(apiResponse.status)
+          .json({ error: `Mindbody API Error: ${errorText}` });
+      }
+
+      const data = await apiResponse.json();
+      const staffList = data.StaffMembers || data.Staff || data.staff || [];
+
+      const normalized = staffList.map((s: any) => ({
+        id: String(s.Id),
+        firstName: s.FirstName || "",
+        lastName: s.LastName || "",
+        fullName: `${s.FirstName || ""} ${s.LastName || ""}`.trim(),
+        email: s.Email || "",
+        displayName: s.DisplayName || `${s.FirstName || ""} ${s.LastName || ""}`.trim(),
+        imageUrl: s.ImageUrl || null,
+      }));
+
+      res.json({ staff: normalized });
+    } catch (e: any) {
+      console.error("Fetch staff error:", e);
+      res.status(500).json({ error: e.message || "Failed to fetch staff list" });
+    }
+  });
+
   app.post("/api/mindbody/staff-appointments", async (req, res) => {
     try {
       const mindbodyApiKey = process.env.MINDBODY_API_KEY;

@@ -63,6 +63,8 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
       setFormData({
         firstName: client.firstName || "",
         lastName: client.lastName || "",
+        mindbodyId: client.mindbodyId || "",
+        mindbody_name: client.mindbody_name || "",
         dateOfBirth: client.dateOfBirth || "",
         gender: client.gender || "",
         phone: client.phone || "",

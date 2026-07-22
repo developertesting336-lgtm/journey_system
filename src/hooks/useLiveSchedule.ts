@@ -33,7 +33,8 @@ export function useLiveSchedule(activeStudioId: string | null, isReady: boolean)
           id: doc.id,
           ...doc.data(),
         }        )) as ScheduleEntry[];
-        setSchedules(schedulesData);
+        const activeSchedulesData = schedulesData.filter((s) => s.status !== "Cancelled");
+        setSchedules(activeSchedulesData);
 
         // Fetch client profile data ONLY for people on today's schedule to stay within read quotas
         const startOfToday = new Date();
@@ -41,7 +42,7 @@ export function useLiveSchedule(activeStudioId: string | null, isReady: boolean)
         const endOfToday = new Date();
         endOfToday.setHours(23, 59, 59, 999);
 
-        const todaySchedules = schedulesData.filter((s) => {
+        const todaySchedules = activeSchedulesData.filter((s) => {
           if (!s.startTime) return false;
           // Handle both Firestore Timestamp and JS Date/ISO string
           const d = s.startTime.toDate
