@@ -1281,7 +1281,10 @@ export default function AppContent({
   // Moved up to avoid hook order violation
 
   // Studio Selection Screen (if no active studio or changing studio)
-  if (!activeStudioId || isChangingStudio) {
+  if (
+    (!activeStudioId || isChangingStudio) &&
+    currentView !== "admin-dashboard"
+  ) {
     return (
       <StudioSelectionView
         studios={studios}
@@ -1300,6 +1303,11 @@ export default function AppContent({
             localStorage.setItem("max_strength_authenticated", "false");
             setIsAuthenticated(false);
           }
+          setIsChangingStudio(false);
+        }}
+        onGoToAdmin={() => {
+          setAppMode("admin");
+          setCurrentView("admin-dashboard");
           setIsChangingStudio(false);
         }}
         onBack={() => {

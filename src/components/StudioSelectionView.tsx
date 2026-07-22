@@ -20,8 +20,12 @@ import {
   query,
   where,
   getDocs,
+  doc,
+  updateDoc,
 } from "firebase/firestore";
 import { useToast } from "../contexts/ToastContext";
+import { Shield } from "lucide-react";
+import { isStudioLeader } from "../lib/permissions";
 
 interface StudioSelectionViewProps {
   studios: Studio[];
@@ -29,6 +33,7 @@ interface StudioSelectionViewProps {
   trainers?: Trainer[];
   authTrainer?: Trainer;
   onSelectTrainer: (trainer: Trainer, studioId: string) => void;
+  onGoToAdmin?: () => void;
   onBack: () => void;
 }
 
@@ -38,6 +43,7 @@ export function StudioSelectionView({
   trainers = [],
   authTrainer,
   onSelectTrainer,
+  onGoToAdmin,
   onBack,
 }: StudioSelectionViewProps) {
   const { success: toastSuccess, error: toastError } = useToast();
@@ -47,6 +53,13 @@ export function StudioSelectionView({
   const [requestedStudios, setRequestedStudios] = useState<Set<string>>(
     new Set(),
   );
+
+  const isAdminUser =
+    isStudioLeader(authTrainer || null) ||
+    authTrainer?.role === "Admin" ||
+    authTrainer?.role === "Founder" ||
+    authTrainer?.role === "Overseer" ||
+    authTrainer?.email === "developertesting336@gmail.com";
 
   // Check if we've already requested access on mount
   React.useEffect(() => {
@@ -157,6 +170,14 @@ export function StudioSelectionView({
           <p className="text-zinc-500 font-bold uppercase tracking-widest text-[11px] max-w-md mt-1">
             Choose your active territory for this session
           </p>
+          {isAdminUser && onGoToAdmin && (
+            <Button
+              onClick={onGoToAdmin}
+              className="mt-4 bg-slate-800 hover:bg-slate-700 text-white font-bold uppercase text-[11px] tracking-widest px-4 h-9 rounded-xl border border-slate-700 flex items-center gap-2 cursor-pointer shadow-md"
+            >
+              <Shield className="w-3.5 h-3.5 text-[#F06C22]" /> Go To Admin Panel
+            </Button>
+          )}
         </div>
 
         {/* Render grouped/networked studios */}
@@ -344,14 +365,24 @@ export function StudioSelectionView({
           )}
 
           {studios.length === 0 && (
-            <div className="py-20 text-center bg-bg-dark-2/60 rounded-[40px] border border-dashed border-slate-800">
-              <Building2 className="w-12 h-12 text-slate-700 mx-auto mb-4" />
-              <p className="text-sm font-black uppercase tracking-widest text-zinc-450">
-                No Authorized Studios Configuration Found
-              </p>
-              <p className="text-[11px] uppercase tracking-wider text-zinc-600 mt-2">
-                Check corporate firestore database state
-              </p>
+            <div className="py-20 px-6 text-center bg-bg-dark-2/60 rounded-[40px] border border-dashed border-slate-800 flex flex-col items-center justify-center gap-4">
+              <Building2 className="w-12 h-12 text-[#F06C22] mx-auto" />
+              <div>
+                <p className="text-base font-black uppercase tracking-widest text-white">
+                  No Authorized Studios Configuration Found
+                </p>
+                <p className="text-xs uppercase tracking-wider text-slate-400 mt-1 max-w-md">
+                  Database clean start complete. Access the Admin Panel to manage studios, create location entries, configure Mindbody Site IDs, and manage staff.
+                </p>
+              </div>
+              {isAdminUser && onGoToAdmin && (
+                <Button
+                  onClick={onGoToAdmin}
+                  className="mt-2 bg-[#F06C22] hover:bg-[#d95b16] text-white font-black uppercase tracking-widest text-xs h-12 px-8 rounded-xl shadow-lg shadow-[#F06C22]/20 flex items-center gap-2.5 cursor-pointer"
+                >
+                  <Shield className="w-4 h-4" /> Go To Admin Panel
+                </Button>
+              )}
             </div>
           )}
         </div>
