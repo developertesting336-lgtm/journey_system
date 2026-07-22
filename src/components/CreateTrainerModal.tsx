@@ -45,14 +45,29 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
 
   const [mindbodyStaffId, setMindbodyStaffId] = useState("");
   const [fetchingStaff, setFetchingStaff] = useState(false);
-  const [staffOptions, setStaffOptions] = useState<{ id: string; fullName: string; email: string }[]>([]);
+  const [staffOptions, setStaffOptions] = useState<
+    { id: string; fullName: string; email: string }[]
+  >([]);
 
   const handleFetchStaff = async () => {
+    const homeStudio = availableStudios.find(
+      (s) => s.id === primaryHomeStudioId,
+    );
+    const siteId = homeStudio?.mindbodySiteId
+      ? String(homeStudio.mindbodySiteId).trim()
+      : null;
+
+    if (!siteId) {
+      console.warn(
+        "[CreateTrainerModal] No Mindbody Site ID configured for selected studio:",
+        primaryHomeStudioId,
+      );
+      setStaffOptions([]);
+      return;
+    }
+
     setFetchingStaff(true);
     try {
-      const homeStudio = availableStudios.find((s) => s.id === primaryHomeStudioId);
-      const siteId = homeStudio?.mindbodySiteId ? String(homeStudio.mindbodySiteId) : "-99";
-
       const res = await fetch("/api/mindbody/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,11 +81,18 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
       const data = await res.json();
       setStaffOptions(data.staff || []);
     } catch (err: any) {
-      toastError("Failed to fetch staff list: " + err.message);
+      console.error("Staff fetch error:", err);
     } finally {
       setFetchingStaff(false);
     }
   };
+
+  // Auto-fetch Mindbody staff list when modal opens or studio changes
+  React.useEffect(() => {
+    if (isOpen) {
+      handleFetchStaff();
+    }
+  }, [isOpen, primaryHomeStudioId]);
 
   const handleSubmit = async () => {
     if (!fullName || !initials || !primaryHomeStudioId) return;
@@ -216,18 +238,43 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
                     setFullName(selected.fullName);
                     const parts = selected.fullName.split(" ");
                     if (parts.length > 1) {
-                      setInitials((parts[0][0] + parts[parts.length - 1][0]).toUpperCase());
+                      setInitials(
+                        (
+                          parts[0][0] + parts[parts.length - 1][0]
+                        ).toUpperCase(),
+                      );
                     }
                   }
                 }}
               >
-                <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 text-sm font-bold">
-                  <SelectValue placeholder="Select Mindbody Staff..." />
+                <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 text-sm font-bold w-full">
+                  <SelectValue
+                    placeholder={
+                      fetchingStaff
+                        ? "Loading Mindbody Staff..."
+                        : "Select Mindbody Staff..."
+                    }
+                  />
                 </SelectTrigger>
-                <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white max-h-60">
+                <SelectContent
+                  position="popper"
+                  sideOffset={4}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white max-h-72 w-(--radix-select-trigger-width) min-w-85 font-bold shadow-2xl z-50 rounded-2xl p-1"
+                >
                   {staffOptions.map((s) => (
-                    <SelectItem key={s.id} value={s.id} className="font-bold">
-                      {s.fullName} (ID: {s.id})
+                    <SelectItem
+                      key={s.id}
+                      value={s.id}
+                      className="font-bold py-2.5 px-3 focus:bg-slate-100 dark:focus:bg-slate-800 rounded-xl cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between w-full gap-4 text-xs sm:text-sm">
+                        <span className="font-extrabold text-slate-900 dark:text-white truncate">
+                          {s.fullName}
+                        </span>
+                        <span className="font-mono text-xs text-[#F06C22] font-bold shrink-0 bg-[#F06C22]/10 px-2 py-0.5 rounded-md border border-[#F06C22]/20">
+                          ID: {s.id}
+                        </span>
+                      </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -235,7 +282,9 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
             ) : (
               <Input
                 value={mindbodyStaffId}
-                onChange={(e) => setMindbodyStaffId(e.target.value.replace(/[^0-9]/g, ""))}
+                onChange={(e) =>
+                  setMindbodyStaffId(e.target.value.replace(/[^0-9]/g, ""))
+                }
                 className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 font-mono text-sm"
                 placeholder="e.g. 100000123"
               />

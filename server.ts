@@ -273,9 +273,13 @@ async function startServer() {
         });
       }
 
-      const siteId = -99;
-      const username = "mindbodysandboxsite@gmail.com";
-      const password = "Apitest1234";
+      const { siteId, username, password } = req.body || {};
+
+      if (!siteId || !username || !password) {
+        return res.status(400).json({
+          error: "siteId, username, and password are required.",
+        });
+      }
 
       const requestBody = {
         Username: username,
@@ -298,9 +302,16 @@ async function startServer() {
       if (!response.ok) {
         const errorData = await response.text();
         console.error("Mindbody API Error:", response.status, errorData);
+        let parsedError = errorData;
+        try {
+          const jsonErr = JSON.parse(errorData);
+          if (jsonErr?.Error?.Message) {
+            parsedError = jsonErr.Error.Message;
+          }
+        } catch (_) {}
         return res
           .status(response.status)
-          .json({ error: `Mindbody API Error: ${errorData}` });
+          .json({ error: `Mindbody API Error: ${parsedError}` });
       }
 
       const data = await response.json();
@@ -322,7 +333,11 @@ async function startServer() {
           .json({ error: "MINDBODY_API_KEY environment variable is not set." });
       }
 
-      const siteId = req.body.siteId || "-99";
+      const siteId = req.body?.siteId;
+
+      if (!siteId) {
+        return res.status(400).json({ error: "siteId is required" });
+      }
 
       const apiResponse = await fetch(
         `https://api.mindbodyonline.com/public/v6/staff/staff?Limit=200`,
@@ -339,9 +354,16 @@ async function startServer() {
       if (!apiResponse.ok) {
         const errorText = await apiResponse.text();
         console.error("Mindbody Fetch Staff Error:", apiResponse.status, errorText);
+        let parsedError = errorText;
+        try {
+          const jsonErr = JSON.parse(errorText);
+          if (jsonErr?.Error?.Message) {
+            parsedError = jsonErr.Error.Message;
+          }
+        } catch (_) {}
         return res
           .status(apiResponse.status)
-          .json({ error: `Mindbody API Error: ${errorText}` });
+          .json({ error: `Mindbody API Error: ${parsedError}` });
       }
 
       const data = await apiResponse.json();
@@ -373,7 +395,7 @@ async function startServer() {
           .json({ error: "MINDBODY_API_KEY environment variable is not set." });
       }
 
-      const { siteId, startDate, endDate, staffIds } = req.body;
+      const { siteId, startDate, endDate, staffIds } = req.body || {};
 
       if (!siteId) {
         return res.status(400).json({ error: "siteId is required" });
@@ -419,9 +441,16 @@ async function startServer() {
           apiResponse.status,
           errorText,
         );
+        let parsedError = errorText;
+        try {
+          const jsonErr = JSON.parse(errorText);
+          if (jsonErr?.Error?.Message) {
+            parsedError = jsonErr.Error.Message;
+          }
+        } catch (_) {}
         return res
           .status(apiResponse.status)
-          .json({ error: `Mindbody API Error: ${errorText}` });
+          .json({ error: `Mindbody API Error: ${parsedError}` });
       }
 
       const data = await apiResponse.json();

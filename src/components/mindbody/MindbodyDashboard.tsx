@@ -24,6 +24,12 @@ export function MindbodyDashboard() {
     try {
       const response = await fetch("/api/mindbody/issueUserToken", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteId: -99,
+          username: "mindbodysandboxsite@gmail.com",
+          password: "Apitest1234",
+        }),
       });
       const data = await response.json();
       if (!response.ok) {

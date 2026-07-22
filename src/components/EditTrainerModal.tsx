@@ -72,6 +72,46 @@ export function EditTrainerModal({
   const [mindbodyStaffId, setMindbodyStaffId] = useState("");
 
   const [saving, setSaving] = useState(false);
+  const [fetchingStaff, setFetchingStaff] = useState(false);
+  const [staffOptions, setStaffOptions] = useState<
+    { id: string; fullName: string }[]
+  >([]);
+
+  const handleFetchStaff = async () => {
+    const targetStudioId = primaryHomeStudioId || studios[0]?.id;
+    const studio = studios.find((s) => s.id === targetStudioId);
+    const siteId = studio?.mindbodySiteId
+      ? String(studio.mindbodySiteId).trim()
+      : null;
+
+    if (!siteId) {
+      console.warn(
+        "[EditTrainerModal] No Mindbody Site ID configured for studio:",
+        targetStudioId,
+      );
+      setStaffOptions([]);
+      return;
+    }
+
+    setFetchingStaff(true);
+    try {
+      const res = await fetch("/api/mindbody/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch staff");
+
+      if (data.staff && Array.isArray(data.staff)) {
+        setStaffOptions(data.staff);
+      }
+    } catch (err: any) {
+      console.error("Fetch staff error:", err);
+    } finally {
+      setFetchingStaff(false);
+    }
+  };
 
   // Load current values of the trainer being edited
   useEffect(() => {
@@ -92,6 +132,13 @@ export function EditTrainerModal({
       setMindbodyStaffId(trainer.mindbodyStaffId || "");
     }
   }, [trainer, isOpen]);
+
+  // Auto-fetch Mindbody staff list when modal opens or studio changes
+  useEffect(() => {
+    if (isOpen) {
+      handleFetchStaff();
+    }
+  }, [isOpen, primaryHomeStudioId]);
 
   const handleAccessibleStudioToggle = (studioId: string) => {
     setAccessibleStudioIds((prev) =>
@@ -279,18 +326,74 @@ export function EditTrainerModal({
 
           {/* Mindbody Staff ID for API sync */}
           <div className="space-y-2">
-            <Label className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-widest flex items-center gap-1">
-              <Eye className="w-3 h-3 text-orange-500" />
-              Mindbody Staff ID
-            </Label>
-            <Input
-              value={mindbodyStaffId}
-              onChange={(e) => setMindbodyStaffId(e.target.value.replace(/[^0-9]/g, ''))}
-              className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-11 font-mono"
-              placeholder="e.g. 100000123"
-            />
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-widest flex items-center gap-1">
+                <Eye className="w-3 h-3 text-orange-500" />
+                Mindbody Staff ID
+              </Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleFetchStaff}
+                disabled={fetchingStaff}
+                className="h-7 text-[10px] font-black uppercase text-indigo-500 hover:text-indigo-600 px-2"
+              >
+                {fetchingStaff ? "Fetching..." : "Lookup from Mindbody"}
+              </Button>
+            </div>
+            {staffOptions.length > 0 ? (
+              <Select
+                value={mindbodyStaffId}
+                onValueChange={(val) => {
+                  setMindbodyStaffId(val);
+                }}
+              >
+                <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-11 text-sm font-bold w-full">
+                  <SelectValue
+                    placeholder={
+                      fetchingStaff
+                        ? "Loading Mindbody Staff..."
+                        : "Select Mindbody Staff..."
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent
+                  position="popper"
+                  sideOffset={4}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white max-h-72 w-(--radix-select-trigger-width) min-w-85 font-bold shadow-2xl z-50 rounded-2xl p-1"
+                >
+                  {staffOptions.map((s) => (
+                    <SelectItem
+                      key={s.id}
+                      value={s.id}
+                      className="font-bold py-2.5 px-3 focus:bg-slate-100 dark:focus:bg-slate-800 rounded-xl cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between w-full gap-4 text-xs sm:text-sm">
+                        <span className="font-extrabold text-slate-900 dark:text-white truncate">
+                          {s.fullName}
+                        </span>
+                        <span className="font-mono text-xs text-[#F06C22] font-bold shrink-0 bg-[#F06C22]/10 px-2 py-0.5 rounded-md border border-[#F06C22]/20">
+                          ID: {s.id}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={mindbodyStaffId}
+                onChange={(e) =>
+                  setMindbodyStaffId(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-11 font-mono text-sm"
+                placeholder="e.g. 100000123"
+              />
+            )}
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">
-              Find in Mindbody Admin → Staff → [Name] → Staff ID. Required for API schedule sync.
+              Select or enter the Staff ID assigned in Mindbody. Required for
+              API schedule sync.
             </p>
           </div>
 
