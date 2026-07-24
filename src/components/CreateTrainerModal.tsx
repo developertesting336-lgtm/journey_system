@@ -196,7 +196,14 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
               onValueChange={setPrimaryHomeStudioId}
             >
               <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-12 text-sm font-bold focus:ring-[#38BDF8]">
-                <SelectValue placeholder="Select primary home studio..." />
+                <SelectValue placeholder="Select primary home studio...">
+                  {availableStudios.find(
+                    (s) =>
+                      s.id === primaryHomeStudioId ||
+                      s.name?.toLowerCase() ===
+                        primaryHomeStudioId?.toLowerCase(),
+                  )?.name || primaryHomeStudioId}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white max-h-75">
                 {availableStudios.map((studio) => (
@@ -254,7 +261,11 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
                         ? "Loading Mindbody Staff..."
                         : "Select Mindbody Staff..."
                     }
-                  />
+                  >
+                    {staffOptions.find((s) => s.id === mindbodyStaffId)
+                      ?.fullName ||
+                      (mindbodyStaffId ? `ID: ${mindbodyStaffId}` : undefined)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent
                   position="popper"

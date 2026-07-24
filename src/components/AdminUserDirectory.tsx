@@ -728,9 +728,15 @@ export function AdminUserDirectory({ studios, onRefresh }: Props) {
             filteredUsers.map((user) => {
               const hasPinSet = !!(user.pin || user.pinHash);
               const otherAccess = (user.accessibleStudioIds || []).filter(
-                (id) => id !== user.primaryHomeStudioId,
+                (id) =>
+                  Boolean(id && id.trim()) &&
+                  id !== user.primaryHomeStudioId &&
+                  studios.some((s) => s.id === id),
               );
-              const guestAccess = user.activeGuestStudioIds || [];
+              const guestAccess = (user.activeGuestStudioIds || []).filter(
+                (id) =>
+                  Boolean(id && id.trim()) && studios.some((s) => s.id === id),
+              );
 
               return (
                 <div

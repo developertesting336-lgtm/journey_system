@@ -180,16 +180,20 @@ export function EditTrainerModal({
       };
 
       if (isAdminMode) {
-        // Force primaryHomeStudioId to be in accessibleStudioIds
+        // Force primaryHomeStudioId to be in accessibleStudioIds and filter empty IDs
         const finalAccessible = [
           ...new Set([primaryHomeStudioId, ...accessibleStudioIds]),
-        ];
+        ].filter((id): id is string => Boolean(id && id.trim()));
+
+        const finalGuest = activeGuestStudioIds.filter(
+          (id): id is string => Boolean(id && id.trim()),
+        );
 
         payload.role = role;
         payload.requiresPinReset = requiresPinReset;
         payload.primaryHomeStudioId = primaryHomeStudioId;
         payload.accessibleStudioIds = finalAccessible;
-        payload.activeGuestStudioIds = activeGuestStudioIds;
+        payload.activeGuestStudioIds = finalGuest;
         payload.isVisibleOnCalendar = isVisibleOnCalendar;
       }
 
@@ -362,7 +366,11 @@ export function EditTrainerModal({
                         ? "Loading Mindbody Staff..."
                         : "Select Mindbody Staff..."
                     }
-                  />
+                  >
+                    {staffOptions.find((s) => s.id === mindbodyStaffId)
+                      ?.fullName ||
+                      (mindbodyStaffId ? `ID: ${mindbodyStaffId}` : undefined)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent
                   position="popper"
@@ -449,7 +457,14 @@ export function EditTrainerModal({
                     onValueChange={setPrimaryHomeStudioId}
                   >
                     <SelectTrigger className="bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl h-11 text-sm font-bold">
-                      <SelectValue placeholder="Select primary home studio" />
+                      <SelectValue placeholder="Select primary home studio">
+                        {studios.find(
+                          (s) =>
+                            s.id === primaryHomeStudioId ||
+                            s.name?.toLowerCase() ===
+                              primaryHomeStudioId?.toLowerCase(),
+                        )?.name || primaryHomeStudioId}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border-slate-200 dark:border-slate-700 font-sans max-h-62.5">
                       {studios.map((s) => (
