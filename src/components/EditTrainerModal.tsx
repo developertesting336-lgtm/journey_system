@@ -175,7 +175,7 @@ export function EditTrainerModal({
         email: email.trim(),
         brandColor,
         mindbodyLinked,
-        mindbodyStaffId: mindbodyStaffId.trim() || undefined,
+        mindbodyStaffId: mindbodyStaffId.trim() || "",
         searchTokens,
       };
 
@@ -192,6 +192,12 @@ export function EditTrainerModal({
         payload.activeGuestStudioIds = activeGuestStudioIds;
         payload.isVisibleOnCalendar = isVisibleOnCalendar;
       }
+
+      Object.keys(payload).forEach((key) => {
+        if ((payload as any)[key] === undefined) {
+          delete (payload as any)[key];
+        }
+      });
 
       await onSave(payload);
       toastSuccess("Trainer profile updated successfully.");

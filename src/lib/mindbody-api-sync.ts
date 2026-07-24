@@ -155,15 +155,28 @@ export async function syncMindbodySchedules(
       .toISOString()
       .split("T")[0];
 
-  let targetTrainers = trainers.filter((t) => t.mindbodyStaffId);
+  let targetTrainers = trainers;
+  let staffIdsToFetch: string[] = [];
+
   if (targetStaffId) {
-    targetTrainers = targetTrainers.filter((t) => t.id === targetStaffId);
+    targetTrainers = trainers.filter((t) => t.id === targetStaffId);
+    staffIdsToFetch = targetTrainers
+      .map((t) => t.mindbodyStaffId)
+      .filter((id): id is string => Boolean(id));
+  } else {
+    // Studio-wide sync: fetch all staff appointments for the studio
+    const linkedIds = trainers
+      .map((t) => t.mindbodyStaffId)
+      .filter((id): id is string => Boolean(id));
+    // If some trainers have staff IDs, fetch specifically for them + studio-wide
+    staffIdsToFetch = linkedIds;
   }
 
-  if (targetTrainers.length === 0) {
-    result.errors.push("No trainers found with a Mindbody Staff ID assigned.");
-    return result;
-  }
+  const activeStudio = studios.find(
+    (s) => s.mindbodySiteId && String(s.mindbodySiteId) === String(siteId),
+  );
+  const fallbackStudioId = activeStudio?.id || studios[0]?.id || null;
+  const studioName = activeStudio?.name || "Studio";
 
   try {
     const response = await fetch("/api/mindbody/staff-appointments", {
@@ -173,7 +186,7 @@ export async function syncMindbodySchedules(
         siteId,
         startDate: start,
         endDate: end,
-        staffIds: targetTrainers.map((t) => t.mindbodyStaffId).filter(Boolean),
+        staffIds: staffIdsToFetch.length > 0 ? staffIdsToFetch : undefined,
       }),
     });
 
@@ -219,14 +232,31 @@ export async function syncMindbodySchedules(
       try {
         const mbId = String(appt.Id);
 
-        const trainer = targetTrainers.find(
+        // Try matching trainer by mindbodyStaffId first
+        let trainer = trainers.find(
           (t) =>
+            t.mindbodyStaffId &&
             String(t.mindbodyStaffId).trim() === String(appt.StaffId).trim(),
         );
 
+        // Fallback: Try matching trainer by full name
+        if (!trainer && (appt.StaffFirstName || appt.StaffLastName)) {
+          const mbStaffFullName =
+            `${appt.StaffFirstName || ""} ${appt.StaffLastName || ""}`
+              .trim()
+              .toLowerCase();
+          trainer = trainers.find(
+            (t) => t.fullName && t.fullName.toLowerCase() === mbStaffFullName,
+          );
+        }
+
+        const rawStaffName =
+          `${appt.StaffFirstName || ""} ${appt.StaffLastName || ""}`.trim();
         const trainerName = trainer
           ? trainer.fullName
-          : `${appt.StaffFirstName || ""} ${appt.StaffLastName || ""}`.trim();
+          : rawStaffName
+            ? rawStaffName
+            : `${studioName} Rotation`;
         const trainerId = trainer?.id || null;
 
         const clientName =
@@ -236,7 +266,7 @@ export async function syncMindbodySchedules(
         const clientId = findClientId(
           clientName,
           clients,
-          trainer?.primaryHomeStudioId,
+          trainer?.primaryHomeStudioId || fallbackStudioId || undefined,
         );
 
         const startTime = Timestamp.fromDate(new Date(appt.StartDateTime));
@@ -250,7 +280,7 @@ export async function syncMindbodySchedules(
         const studioId =
           resolveStudioId(appt.LocationId, studios) ||
           trainer?.primaryHomeStudioId ||
-          null;
+          fallbackStudioId;
 
         const payload: Record<string, any> = {
           mindbodyAppointmentId: mbId,

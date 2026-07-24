@@ -80,7 +80,7 @@ export function IntegrationsHubView({
   const [mindbodyKey, setMindbodyKey] = useState("************************");
   const [isTestLoading, setIsTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
-  
+
   // Webhook E2E Test State
   const [isTestingWebhook, setIsTestingWebhook] = useState(false);
   const [webhookTestResult, setWebhookTestResult] = useState<{
@@ -269,7 +269,9 @@ export function IntegrationsHubView({
   // Perform schedule sync from Mindbody API
   const handleSyncSchedules = async (trainerId: string | null = null) => {
     if (!activeStudio?.mindbodySiteId) {
-      toastError("Mindbody Site ID must be set on this studio to fetch appointments.");
+      toastError(
+        "Mindbody Site ID must be set on this studio to fetch appointments.",
+      );
       return;
     }
 
@@ -286,19 +288,35 @@ export function IntegrationsHubView({
         studios,
         trainerId,
         startDate,
-        endDate
+        endDate,
       );
 
       setSyncStats(result);
 
       if (result.errors.length > 0) {
-        toastError(`Sync completed with errors: ${result.errors[0]}`);
+        const firstErr = result.errors[0];
+        if (firstErr.includes("YOU DO NOT HAVE ACCESS TO SITEID")) {
+          toastError(
+            `Mindbody API Error: Developer API key needs authorization for Site ID ${activeStudio.mindbodySiteId} in Mindbody Developer Portal.`,
+          );
+        } else {
+          toastError(`Sync completed with errors: ${firstErr}`);
+        }
       } else {
-        toastSuccess(`Sync Complete! Added: ${result.added}, Updated: ${result.updated}`);
+        toastSuccess(
+          `Sync Complete! Added: ${result.added}, Updated: ${result.updated}`,
+        );
       }
     } catch (err: any) {
       console.error(err);
-      toastError("Schedule sync failed: " + err.message);
+      const errMsg = err.message || "";
+      if (errMsg.includes("YOU DO NOT HAVE ACCESS TO SITEID")) {
+        toastError(
+          `Mindbody Site ID Authorization Required: Site ID ${activeStudio.mindbodySiteId} needs approval in Mindbody Developer Portal.`,
+        );
+      } else {
+        toastError("Schedule sync failed: " + errMsg);
+      }
     } finally {
       setIsSyncing(false);
       setSyncingTrainerId(null);
@@ -325,7 +343,7 @@ export function IntegrationsHubView({
   const studioTrainers = trainers.filter(
     (t) =>
       t.primaryHomeStudioId === activeStudioId ||
-      t.accessibleStudioIds?.includes(activeStudioId || "")
+      t.accessibleStudioIds?.includes(activeStudioId || ""),
   );
 
   return (
@@ -400,7 +418,8 @@ export function IntegrationsHubView({
                   Mindbody public API Connection
                 </CardTitle>
                 <CardDescription>
-                  Site parameters configured to authenticate with the Mindbody online system.
+                  Site parameters configured to authenticate with the Mindbody
+                  online system.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -445,14 +464,17 @@ export function IntegrationsHubView({
                   Staff Schedule Import (API-based)
                 </CardTitle>
                 <CardDescription>
-                  Pull appointments from Mindbody using staff IDs. Direct replacement for iCal urls.
+                  Pull appointments from Mindbody using staff IDs. Direct
+                  replacement for iCal urls.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Date range picker */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Start Sync Date</label>
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                      Start Sync Date
+                    </label>
                     <Input
                       type="date"
                       value={startDate}
@@ -461,7 +483,9 @@ export function IntegrationsHubView({
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">End Sync Date</label>
+                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                      End Sync Date
+                    </label>
                     <Input
                       type="date"
                       value={endDate}
@@ -484,18 +508,25 @@ export function IntegrationsHubView({
                       </div>
                     ) : (
                       studioTrainers.map((t) => (
-                        <div key={t.id} className="flex items-center justify-between p-3 flex-wrap gap-2 text-xs">
+                        <div
+                          key={t.id}
+                          className="flex items-center justify-between p-3 flex-wrap gap-2 text-xs"
+                        >
                           <div className="flex items-center gap-2">
                             <span
                               className="w-2.5 h-2.5 rounded-full shrink-0"
-                              style={{ backgroundColor: t.brandColor || "#F06C22" }}
+                              style={{
+                                backgroundColor: t.brandColor || "#F06C22",
+                              }}
                             />
                             <div>
                               <div className="font-bold text-slate-900 dark:text-white">
                                 {t.fullName} ({t.initials})
                               </div>
                               <div className="text-[10px] text-slate-400 font-mono">
-                                {t.mindbodyStaffId ? `ID: ${t.mindbodyStaffId}` : "Unlinked - No Staff ID"}
+                                {t.mindbodyStaffId
+                                  ? `ID: ${t.mindbodyStaffId}`
+                                  : "Unlinked - No Staff ID"}
                               </div>
                             </div>
                           </div>
@@ -515,7 +546,11 @@ export function IntegrationsHubView({
                               size="sm"
                               variant="outline"
                               className="h-7 text-[10px] font-black uppercase tracking-wider px-2.5 rounded-lg border-indigo-500/20 text-indigo-500 hover:bg-indigo-500/10"
-                              disabled={!t.mindbodyStaffId || isSyncing || (syncingTrainerId !== null)}
+                              disabled={
+                                !t.mindbodyStaffId ||
+                                isSyncing ||
+                                syncingTrainerId !== null
+                              }
                               onClick={() => handleSyncSchedules(t.id)}
                             >
                               {syncingTrainerId === t.id ? (
@@ -534,7 +569,7 @@ export function IntegrationsHubView({
                 {/* Master sync button */}
                 <Button
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-xs h-11 rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
-                  disabled={isSyncing || (syncingTrainerId !== null)}
+                  disabled={isSyncing || syncingTrainerId !== null}
                   onClick={() => handleSyncSchedules(null)}
                 >
                   {isSyncing ? (
@@ -553,11 +588,19 @@ export function IntegrationsHubView({
                 {/* Sync stats display */}
                 {syncStats && (
                   <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 text-xs space-y-1">
-                    <div className="font-bold text-slate-800 dark:text-slate-200">Last Sync Results:</div>
+                    <div className="font-bold text-slate-800 dark:text-slate-200">
+                      Last Sync Results:
+                    </div>
                     <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                      <div className="bg-emerald-500/10 text-emerald-600 p-2 rounded-lg">Added: {syncStats.added}</div>
-                      <div className="bg-indigo-500/10 text-indigo-600 p-2 rounded-lg">Updated: {syncStats.updated}</div>
-                      <div className="bg-slate-500/10 text-slate-500 p-2 rounded-lg">Skipped: {syncStats.skipped}</div>
+                      <div className="bg-emerald-500/10 text-emerald-600 p-2 rounded-lg">
+                        Added: {syncStats.added}
+                      </div>
+                      <div className="bg-indigo-500/10 text-indigo-600 p-2 rounded-lg">
+                        Updated: {syncStats.updated}
+                      </div>
+                      <div className="bg-slate-500/10 text-slate-500 p-2 rounded-lg">
+                        Skipped: {syncStats.skipped}
+                      </div>
                     </div>
                     {syncStats.errors.length > 0 && (
                       <div className="text-red-500 text-[10px] mt-1.5 font-mono">
@@ -587,7 +630,8 @@ export function IntegrationsHubView({
                   )}
                 </CardTitle>
                 <CardDescription>
-                  Public endpoint url that receives live webhook events from Mindbody.
+                  Public endpoint url that receives live webhook events from
+                  Mindbody.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -597,7 +641,11 @@ export function IntegrationsHubView({
                     readOnly
                     className="font-mono text-xs bg-slate-50 dark:bg-slate-900/50 flex-1 h-10 select-all"
                   />
-                  <Button variant="outline" className="h-10 px-4 shrink-0 font-bold uppercase text-[10px]" onClick={handleCopyUrl}>
+                  <Button
+                    variant="outline"
+                    className="h-10 px-4 shrink-0 font-bold uppercase text-[10px]"
+                    onClick={handleCopyUrl}
+                  >
                     Copy Link
                   </Button>
                 </div>
@@ -610,7 +658,8 @@ export function IntegrationsHubView({
                         E2E Webhook Pipeline Test
                       </h4>
                       <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">
-                        Trigger a signed mock client update payload to verify functions ingest data correctly.
+                        Trigger a signed mock client update payload to verify
+                        functions ingest data correctly.
                       </p>
                     </div>
                     <Button
@@ -633,10 +682,25 @@ export function IntegrationsHubView({
                   {webhookTestResult && (
                     <div className="mt-2.5 p-3 rounded-xl bg-slate-100 dark:bg-black/40 border border-slate-200 dark:border-slate-800 font-mono text-[10px] space-y-1.5">
                       <div className="flex justify-between font-bold">
-                        <span>Status Code: <span className={webhookTestResult.success ? "text-emerald-500" : "text-red-500"}>{webhookTestResult.statusCode}</span></span>
-                        <span>Success: {String(webhookTestResult.success)}</span>
+                        <span>
+                          Status Code:{" "}
+                          <span
+                            className={
+                              webhookTestResult.success
+                                ? "text-emerald-500"
+                                : "text-red-500"
+                            }
+                          >
+                            {webhookTestResult.statusCode}
+                          </span>
+                        </span>
+                        <span>
+                          Success: {String(webhookTestResult.success)}
+                        </span>
                       </div>
-                      <div className="text-slate-500 truncate">URL: {webhookTestResult.webhookUrl}</div>
+                      <div className="text-slate-500 truncate">
+                        URL: {webhookTestResult.webhookUrl}
+                      </div>
                       <div className="p-2 bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 overflow-x-auto text-[9px] max-h-16">
                         {webhookTestResult.response}
                       </div>
@@ -706,7 +770,10 @@ export function IntegrationsHubView({
               <CardContent className="p-0">
                 <div className="h-72 overflow-y-auto p-4 space-y-3 font-mono text-[9px] sm:text-xs">
                   {logs.map((log) => (
-                    <div key={log.id} className="flex items-start gap-2.5 border-b border-white/5 pb-2">
+                    <div
+                      key={log.id}
+                      className="flex items-start gap-2.5 border-b border-white/5 pb-2"
+                    >
                       <span className="text-slate-500 shrink-0 font-bold">
                         {log.time}
                       </span>

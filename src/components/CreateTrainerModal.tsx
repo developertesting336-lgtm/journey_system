@@ -109,7 +109,7 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
       primaryHomeStudioId,
       accessibleStudioIds: [primaryHomeStudioId],
       systemStatus: "active",
-      mindbodyStaffId: mindbodyStaffId.trim() || undefined,
+      mindbodyStaffId: mindbodyStaffId.trim() || "",
     } as any;
 
     // Strict validation

@@ -75,6 +75,7 @@ export function TrainerProfileView({
       }
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `trainers/${trainer.id}`);
+      throw e;
     }
   };
 
