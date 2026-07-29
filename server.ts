@@ -4,6 +4,10 @@ import { createServer as createViteServer } from "vite";
 import ical from "node-ical";
 import axios from "axios";
 import path from "path";
+import dotenv from "dotenv";
+
+dotenv.config();
+
 import {
   generateExecutionGuide,
   generateClinicalStrategy,
@@ -353,7 +357,11 @@ async function startServer() {
 
       if (!apiResponse.ok) {
         const errorText = await apiResponse.text();
-        console.error("Mindbody Fetch Staff Error:", apiResponse.status, errorText);
+        console.error(
+          "Mindbody Fetch Staff Error:",
+          apiResponse.status,
+          errorText,
+        );
         let parsedError = errorText;
         try {
           const jsonErr = JSON.parse(errorText);
@@ -375,14 +383,17 @@ async function startServer() {
         lastName: s.LastName || "",
         fullName: `${s.FirstName || ""} ${s.LastName || ""}`.trim(),
         email: s.Email || "",
-        displayName: s.DisplayName || `${s.FirstName || ""} ${s.LastName || ""}`.trim(),
+        displayName:
+          s.DisplayName || `${s.FirstName || ""} ${s.LastName || ""}`.trim(),
         imageUrl: s.ImageUrl || null,
       }));
 
       res.json({ staff: normalized });
     } catch (e: any) {
       console.error("Fetch staff error:", e);
-      res.status(500).json({ error: e.message || "Failed to fetch staff list" });
+      res
+        .status(500)
+        .json({ error: e.message || "Failed to fetch staff list" });
     }
   });
 
@@ -484,7 +495,10 @@ async function startServer() {
   app.post("/api/mindbody/test-webhook", async (req, res) => {
     try {
       const webhookSecret = process.env.MINDBODY_WEBHOOK_SECRET;
-      const configPath = path.resolve(process.cwd(), "firebase-applet-config.json");
+      const configPath = path.resolve(
+        process.cwd(),
+        "firebase-applet-config.json",
+      );
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       const projectId = config.projectId;
       const webhookUrl = `https://us-central1-${projectId}.cloudfunctions.net/mindbodyWebhook`;

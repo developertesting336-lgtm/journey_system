@@ -110,6 +110,7 @@ export function CreateTrainerModal({ isOpen, onOpenChange, onSubmit }: Props) {
       accessibleStudioIds: [primaryHomeStudioId],
       systemStatus: "active",
       mindbodyStaffId: mindbodyStaffId.trim() || "",
+      order: Date.now(),
     } as any;
 
     // Strict validation

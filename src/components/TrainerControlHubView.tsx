@@ -265,6 +265,7 @@ export function TrainerControlHubView({
       const { pinHash, pin, ...restData } = data;
       const ref = await addDoc(collection(db, "trainers"), {
         ...restData,
+        order: (restData as any).order || Date.now(),
         primaryHomeStudioId: restData.primaryHomeStudioId || activeStudioId,
         createdAt: serverTimestamp(),
       });
