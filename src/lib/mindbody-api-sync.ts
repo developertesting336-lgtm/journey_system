@@ -3,6 +3,7 @@ import {
   getDocs,
   writeBatch,
   doc,
+  setDoc,
   query,
   where,
   Timestamp,
@@ -37,10 +38,21 @@ function findClientId(
   clientName: string,
   clientsData: Client[],
   trainerHomeStudioId?: string,
+  mbClientId?: string | null,
 ): string | null {
-  if (!clientName) return null;
-  const normalizedSName = normalizeName(clientName);
-  const cleanSName = cleanAlphanumeric(clientName);
+  if (!clientName && !mbClientId) return null;
+  const normalizedSName = normalizeName(clientName || "");
+  const cleanSName = cleanAlphanumeric(clientName || "");
+
+  if (mbClientId) {
+    const mbMatch = clientsData.find(
+      (c) =>
+        (c.mindbodyClientId &&
+          String(c.mindbodyClientId).trim() === String(mbClientId).trim()) ||
+        (c.id && String(c.id).trim() === String(mbClientId).trim()),
+    );
+    if (mbMatch) return mbMatch.id;
+  }
 
   const isFuzzyMatch = (
     sName: string,
@@ -89,7 +101,8 @@ function findClientId(
 
   if (trainerHomeStudioId) {
     const match = clientsData.find((c) => {
-      if (c.homeStudioId !== trainerHomeStudioId) return false;
+      if (c.homeStudioId && c.homeStudioId !== trainerHomeStudioId)
+        return false;
       const first = c.firstName || "";
       const last = c.lastName || "";
       const fullName = normalizeName(`${first} ${last}`);
@@ -140,6 +153,7 @@ export async function syncMindbodySchedules(
   targetStaffId?: string | null,
   startDate?: string,
   endDate?: string,
+  targetStudioIdOverride?: string | null,
 ): Promise<MindbodySyncResult> {
   const result: MindbodySyncResult = {
     added: 0,
@@ -165,17 +179,17 @@ export async function syncMindbodySchedules(
       .filter((id): id is string => Boolean(id));
   } else {
     // Studio-wide sync: fetch all staff appointments for the studio
-    const linkedIds = trainers
-      .map((t) => t.mindbodyStaffId)
-      .filter((id): id is string => Boolean(id));
-    // If some trainers have staff IDs, fetch specifically for them + studio-wide
-    staffIdsToFetch = linkedIds;
+    staffIdsToFetch = [];
   }
 
   const activeStudio = studios.find(
-    (s) => s.mindbodySiteId && String(s.mindbodySiteId) === String(siteId),
+    (s) =>
+      s.id === targetStudioIdOverride ||
+      (s.mindbodySiteId &&
+        String(s.mindbodySiteId).trim() === String(siteId).trim()),
   );
-  const fallbackStudioId = activeStudio?.id || studios[0]?.id || null;
+  const targetStudioId =
+    targetStudioIdOverride || activeStudio?.id || studios[0]?.id || null;
   const studioName = activeStudio?.name || "Studio";
 
   try {
@@ -202,14 +216,27 @@ export async function syncMindbodySchedules(
       return result;
     }
 
-    const rangeStart = Timestamp.fromDate(new Date(start));
-    const rangeEnd = Timestamp.fromDate(new Date(end + "T23:59:59"));
+    // Fetch all clients from Firestore to guarantee clientId matching across all dates/studios
+    let allClients = clients;
+    try {
+      const clientsSnap = await getDocs(collection(db, "clients"));
+      if (!clientsSnap.empty) {
+        allClients = clientsSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Client[];
+      }
+    } catch (e) {
+      console.warn(
+        "Could not fetch all clients snapshot, fallback to passed clients array:",
+        e,
+      );
+    }
+
     const existingSnap = await getDocs(
       query(
         collection(db, "schedules"),
-        where("source", "==", "MindBody"),
-        where("startTime", ">=", rangeStart),
-        where("startTime", "<=", rangeEnd),
+        where("studioId", "==", targetStudioId),
       ),
     );
 
@@ -232,21 +259,29 @@ export async function syncMindbodySchedules(
       try {
         const mbId = String(appt.Id);
 
-        // Try matching trainer by mindbodyStaffId first
+        // Try matching trainer by mindbodyStaffId AND studio assignment first
         let trainer = trainers.find(
           (t) =>
             t.mindbodyStaffId &&
-            String(t.mindbodyStaffId).trim() === String(appt.StaffId).trim(),
+            String(t.mindbodyStaffId).trim() === String(appt.StaffId).trim() &&
+            (!targetStudioId ||
+              t.primaryHomeStudioId === targetStudioId ||
+              t.accessibleStudioIds?.includes(targetStudioId)),
         );
 
-        // Fallback: Try matching trainer by full name
+        // Fallback: Try matching trainer by full name AND studio assignment
         if (!trainer && (appt.StaffFirstName || appt.StaffLastName)) {
           const mbStaffFullName =
             `${appt.StaffFirstName || ""} ${appt.StaffLastName || ""}`
               .trim()
               .toLowerCase();
           trainer = trainers.find(
-            (t) => t.fullName && t.fullName.toLowerCase() === mbStaffFullName,
+            (t) =>
+              t.fullName &&
+              t.fullName.toLowerCase() === mbStaffFullName &&
+              (!targetStudioId ||
+                t.primaryHomeStudioId === targetStudioId ||
+                t.accessibleStudioIds?.includes(targetStudioId)),
           );
         }
 
@@ -263,10 +298,13 @@ export async function syncMindbodySchedules(
           `${appt.ClientFirstName || ""} ${appt.ClientLastName || ""}`.trim() ||
           "Unknown Client";
 
+        const mbClientId = appt.ClientId ? String(appt.ClientId).trim() : null;
+
         const clientId = findClientId(
           clientName,
-          clients,
-          trainer?.primaryHomeStudioId || fallbackStudioId || undefined,
+          allClients,
+          trainer?.primaryHomeStudioId || targetStudioId || undefined,
+          mbClientId,
         );
 
         const startTime = Timestamp.fromDate(new Date(appt.StartDateTime));
@@ -277,15 +315,23 @@ export async function syncMindbodySchedules(
           appt.Status?.toLowerCase().includes("late cancel") ||
           appt.Status?.toLowerCase() === "cancelled";
 
+        const matchedStudioBySite = studios.find(
+          (s) =>
+            s.mindbodySiteId &&
+            String(s.mindbodySiteId).trim() === String(siteId).trim(),
+        );
+
         const studioId =
+          matchedStudioBySite?.id ||
           resolveStudioId(appt.LocationId, studios) ||
           trainer?.primaryHomeStudioId ||
-          fallbackStudioId;
+          targetStudioId;
 
         const payload: Record<string, any> = {
           mindbodyAppointmentId: mbId,
+          mindbodyClientId: mbClientId,
           clientName,
-          clientId,
+          clientId: clientId || null,
           trainerId,
           trainerName,
           startTime,

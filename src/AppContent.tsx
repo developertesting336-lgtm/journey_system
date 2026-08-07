@@ -584,6 +584,10 @@ export default function AppContent({
         trainers,
         clients,
         studios,
+        null,
+        undefined,
+        undefined,
+        activeStudioId,
       );
 
       if (res.errors && res.errors.length > 0) {
@@ -1484,7 +1488,8 @@ export default function AppContent({
             {currentView === "consultation-wizard" && selectedClientId && (
               <ConsultationWizard
                 client={
-                  clients.find((c) => c.id === selectedClientId) || ({} as Client)
+                  clients.find((c) => c.id === selectedClientId) ||
+                  ({} as Client)
                 }
                 machines={machines}
                 authTrainer={authTrainer}
@@ -1650,7 +1655,10 @@ export default function AppContent({
               selectedClientId &&
               authTrainer && (
                 <ClientClinicalReviewPreloader
-                  client={clients.find((c) => c.id === selectedClientId) || ({} as Client)}
+                  client={
+                    clients.find((c) => c.id === selectedClientId) ||
+                    ({} as Client)
+                  }
                   machines={machines}
                   onOpenBriefing={() => {
                     setCurrentView("workouts");
@@ -1664,7 +1672,10 @@ export default function AppContent({
               selectedClientId &&
               authTrainer && (
                 <ClientProgressReportView
-                  client={clients.find((c) => c.id === selectedClientId) || ({} as Client)}
+                  client={
+                    clients.find((c) => c.id === selectedClientId) ||
+                    ({} as Client)
+                  }
                   trainer={authTrainer}
                   machines={machines}
                   existingReportId={selectedReportId || undefined}
@@ -2386,8 +2397,8 @@ export default function AppContent({
                   >
                     <div className="flex items-center gap-4">
                       <div className="w-10 h-10 rounded-xl bg-background flex items-center justify-center font-black text-primary border shadow-sm dark:shadow-none group-hover:scale-110 transition-transform">
-                        {(client.firstName || '?')[0] || '?'}
-                        {(client.lastName || '')[0] || ''}
+                        {(client.firstName || "?")[0] || "?"}
+                        {(client.lastName || "")[0] || ""}
                       </div>
                       <div>
                         <p className="font-black uppercase tracking-tight text-sm">
@@ -2427,8 +2438,8 @@ export default function AppContent({
         open={isReorderingTrainers}
         onOpenChange={setIsReorderingTrainers}
       >
-        <DialogContent className="max-w-md rounded-[32px] p-0 overflow-hidden border-none shadow-2xl dark:shadow-none min-h-100">
-          <DialogHeader className="p-8 bg-white dark:bg-bg-dark border-b">
+        <DialogContent className="max-w-md rounded-[32px] p-0 overflow-hidden border-none shadow-2xl dark:shadow-none max-h-[85vh] flex flex-col">
+          <DialogHeader className="p-8 bg-white dark:bg-bg-dark border-b shrink-0">
             <div className="flex items-center gap-4">
               <div className="p-3 bg-primary/10 rounded-2xl">
                 <GripVertical className="w-6 h-6 text-primary" />
@@ -2443,75 +2454,83 @@ export default function AppContent({
               </div>
             </div>
           </DialogHeader>
-          <div className="p-6 space-y-3 flex-1 overflow-y-auto">
-            {sortedTrainers.map((trainer, idx) => (
-              <div
-                key={trainer.id}
-                className="flex items-center gap-4 p-4 bg-white dark:bg-bg-dark rounded-2xl border border-border/50 group"
-              >
-                <div className="w-8 h-8 rounded-lg bg-background border flex items-center justify-center font-black text-xs text-muted-foreground">
-                  {idx + 1}
-                </div>
-                <div className="flex-1">
-                  <p className="font-black uppercase tracking-tighter text-sm">
-                    {trainer.fullName}
-                  </p>
-                  <p className="text-[11px] font-bold text-muted-foreground uppercase italic">
-                    {trainer.initials}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={idx === 0}
-                    className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary disabled:opacity-20"
-                    onClick={async () => {
-                      const newSorted = [...sortedTrainers];
-                      [newSorted[idx], newSorted[idx - 1]] = [
-                        newSorted[idx - 1],
-                        newSorted[idx],
-                      ];
-                      for (let i = 0; i < newSorted.length; i++) {
-                        if (newSorted[i].id) {
-                          await updateDoc(
-                            doc(db, "trainers", newSorted[i].id!),
-                            { order: i },
-                          );
+          <div className="p-6 space-y-3 flex-1 overflow-y-auto custom-scrollbar">
+            {sortedTrainers
+              .filter(
+                (t) =>
+                  !activeStudioId ||
+                  t.primaryHomeStudioId === activeStudioId ||
+                  t.accessibleStudioIds?.includes(activeStudioId) ||
+                  t.activeGuestStudioIds?.includes(activeStudioId),
+              )
+              .map((trainer, idx, studioTrainers) => (
+                <div
+                  key={trainer.id}
+                  className="flex items-center gap-4 p-4 bg-white dark:bg-bg-dark rounded-2xl border border-border/50 group"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-background border flex items-center justify-center font-black text-xs text-muted-foreground">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-black uppercase tracking-tighter text-sm">
+                      {trainer.fullName}
+                    </p>
+                    <p className="text-[11px] font-bold text-muted-foreground uppercase italic">
+                      {trainer.initials}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={idx === 0}
+                      className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary disabled:opacity-20"
+                      onClick={async () => {
+                        const newSorted = [...studioTrainers];
+                        [newSorted[idx], newSorted[idx - 1]] = [
+                          newSorted[idx - 1],
+                          newSorted[idx],
+                        ];
+                        for (let i = 0; i < newSorted.length; i++) {
+                          if (newSorted[i].id) {
+                            await updateDoc(
+                              doc(db, "trainers", newSorted[i].id!),
+                              { order: i },
+                            );
+                          }
                         }
-                      }
-                    }}
-                  >
-                    <ChevronUp className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={idx === sortedTrainers.length - 1}
-                    className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary disabled:opacity-20"
-                    onClick={async () => {
-                      const newSorted = [...sortedTrainers];
-                      [newSorted[idx], newSorted[idx + 1]] = [
-                        newSorted[idx + 1],
-                        newSorted[idx],
-                      ];
-                      for (let i = 0; i < newSorted.length; i++) {
-                        if (newSorted[i].id) {
-                          await updateDoc(
-                            doc(db, "trainers", newSorted[i].id!),
-                            { order: i },
-                          );
+                      }}
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={idx === studioTrainers.length - 1}
+                      className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary disabled:opacity-20"
+                      onClick={async () => {
+                        const newSorted = [...studioTrainers];
+                        [newSorted[idx], newSorted[idx + 1]] = [
+                          newSorted[idx + 1],
+                          newSorted[idx],
+                        ];
+                        for (let i = 0; i < newSorted.length; i++) {
+                          if (newSorted[i].id) {
+                            await updateDoc(
+                              doc(db, "trainers", newSorted[i].id!),
+                              { order: i },
+                            );
+                          }
                         }
-                      }
-                    }}
-                  >
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
+                      }}
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
-          <DialogFooter className="p-6 border-t bg-white dark:bg-bg-dark">
+          <DialogFooter className="p-6 border-t bg-white dark:bg-bg-dark shrink-0">
             <Button
               onClick={() => setIsReorderingTrainers(false)}
               className="rounded-xl font-bold uppercase tracking-widest w-full h-12"

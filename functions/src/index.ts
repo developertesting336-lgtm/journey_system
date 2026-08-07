@@ -17,7 +17,7 @@ const db = getFirestore("ai-studio-32cbbdcc-6e08-4770-9665-867c68878efa");
 export const calculateFacilityAnalyticsV2 = onSchedule(
   {
     schedule: "0 2 * * *",
-    timeZone: "Etc/UTC",
+    timeZone: "America/New_York",
     region: "us-central1",
   },
   async (event) => {
@@ -322,7 +322,7 @@ export const onBookingReminderWrite = onDocumentCreated(
 export const sendDailySummary = onSchedule(
   {
     schedule: "0 6 * * *",
-    timeZone: "Etc/UTC",
+    timeZone: "America/New_York",
     region: "us-central1",
   },
   async (event) => {

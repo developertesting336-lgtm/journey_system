@@ -72,14 +72,13 @@ export function CalendarView({
         t.activeGuestStudioIds?.includes(activeStudioId);
       if (isAssigned) return true;
 
-      const hasSessionInActiveStudio = schedules.some(
-        (s) =>
-          (s.trainerId === t.id ||
-            (s.trainerName &&
-              t.fullName &&
-              s.trainerName.toLowerCase() === t.fullName.toLowerCase())) &&
-          s.status !== "Cancelled",
-      );
+      const hasSessionInActiveStudio = schedules.some((s) => {
+        if (s.status === "Cancelled") return false;
+        if (activeStudioId && s.studioId && s.studioId !== activeStudioId) return false;
+        if (s.trainerId && t.id && (s.trainerId === t.id || String(s.trainerId) === String(t.id))) return true;
+        if (s.trainerName && t.fullName && s.trainerName.toLowerCase() === t.fullName.toLowerCase()) return true;
+        return false;
+      });
       return hasSessionInActiveStudio;
     });
   }, [trainers, activeStudioId, schedules]);
@@ -228,7 +227,7 @@ export function CalendarView({
   const isTrainerMatch = (s: any, trainer: Trainer): boolean => {
     if (!s || !trainer) return false;
     const sId = s.trainerId || s.staffId || s.StaffId;
-    if (sId && trainer.id && String(sId) === String(trainer.id)) return true;
+    if (sId && trainer.id && (String(sId) === String(trainer.id))) return true;
 
     const sName = (s.trainerName || s.staffName || s.StaffFirstName || "")
       .trim()
@@ -239,17 +238,13 @@ export function CalendarView({
       .trim()
       .toLowerCase();
 
+    if (!sName || !tFull) return false;
+    if (sName === tFull) return true;
+    if (tFirst.length >= 2 && sName === tFirst) return true;
     if (
-      sName &&
-      tFirst &&
-      (sName === tFirst || sName.startsWith(tFirst) || tFirst.startsWith(sName))
-    ) {
-      return true;
-    }
-    if (
-      sName &&
-      tFull &&
-      (sName === tFull || sName.includes(tFull) || tFull.includes(sName))
+      sName.length >= 3 &&
+      tFull.length >= 3 &&
+      (sName.includes(tFull) || tFull.includes(sName))
     ) {
       return true;
     }

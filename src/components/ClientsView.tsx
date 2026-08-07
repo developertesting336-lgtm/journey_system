@@ -295,14 +295,23 @@ export function ClientsView({
     const sId = s.trainerId || s.staffId || s.StaffId;
     if (sId && trainer.id && String(sId) === String(trainer.id)) return true;
 
-    const sName = (s.trainerName || s.staffName || s.StaffFirstName || "").trim().toLowerCase();
+    const sName = (s.trainerName || s.staffName || s.StaffFirstName || "")
+      .trim()
+      .toLowerCase();
     const tFull = (trainer.fullName || "").trim().toLowerCase();
-    const tFirst = ((trainer as any).firstName || trainer.fullName || "").split(" ")[0].trim().toLowerCase();
+    const tFirst = ((trainer as any).firstName || trainer.fullName || "")
+      .split(" ")[0]
+      .trim()
+      .toLowerCase();
 
-    if (sName && tFirst && (sName === tFirst || sName.startsWith(tFirst) || tFirst.startsWith(sName))) {
-      return true;
-    }
-    if (sName && tFull && (sName === tFull || sName.includes(tFull) || tFull.includes(sName))) {
+    if (!sName || !tFull) return false;
+    if (sName === tFull) return true;
+    if (tFirst.length >= 2 && sName === tFirst) return true;
+    if (
+      sName.length >= 3 &&
+      tFull.length >= 3 &&
+      (sName.includes(tFull) || tFull.includes(sName))
+    ) {
       return true;
     }
     return false;
@@ -332,7 +341,11 @@ export function ClientsView({
       if (!date) return false;
       return date >= dateStart && date <= dateEnd && s.status !== "Cancelled";
     })
-    .sort((a, b) => getMillis(a.startTime || a.StartDateTime || a.date) - getMillis(b.startTime || b.StartDateTime || b.date));
+    .sort(
+      (a, b) =>
+        getMillis(a.startTime || a.StartDateTime || a.date) -
+        getMillis(b.startTime || b.StartDateTime || b.date),
+    );
 
   const AM_SLOTS = React.useMemo(() => {
     let minHour = 7;
@@ -613,6 +626,7 @@ export function ClientsView({
 
       const hasSessionToday = todaysSchedules.some(
         (s) =>
+          (!activeStudioId || !s.studioId || s.studioId === activeStudioId) &&
           s.trainerName &&
           t.fullName &&
           s.trainerName.toLowerCase() === t.fullName.toLowerCase(),
@@ -622,6 +636,7 @@ export function ClientsView({
 
     const missingTrainerNames = new Set<string>();
     todaysSchedules.forEach((s) => {
+      if (activeStudioId && s.studioId && s.studioId !== activeStudioId) return;
       if (
         s.trainerName &&
         !s.trainerName.toLowerCase().includes("select") &&
@@ -651,15 +666,14 @@ export function ClientsView({
     const withSessions = combined.filter((t) =>
       todaysSchedules.some(
         (s) =>
+          (!activeStudioId || !s.studioId || s.studioId === activeStudioId) &&
           s.trainerName &&
           t.fullName &&
           s.trainerName.toLowerCase() === t.fullName.toLowerCase() &&
           !s.clientName?.toLowerCase().includes("unavailab"),
       ),
     );
-    const withoutSessions = combined.filter((t) => !withSessions.includes(t));
-
-    return [...withSessions, ...withoutSessions];
+    return withSessions.length > 0 ? withSessions : activeTrainers;
   }, [sortedTrainers, activeStudioId, todaysSchedules]);
 
   return (
@@ -1219,21 +1233,15 @@ export function ClientsView({
                         )}
                         {visibleTrainersList.map((trainer) => {
                           const sessionCount = todaysSchedules.filter((s) => {
-                            const sId = s.trainerId || s.staffId || s.StaffId;
-                            const isIdMatch = !!(sId && trainer.id && String(sId) === String(trainer.id));
-                            const sTrainer = (s.trainerName || s.staffName || s.StaffFirstName || "").trim().toLowerCase();
-                            const tFull = (trainer.fullName || "").trim().toLowerCase();
-                            const tFirst = (trainer.firstName || trainer.fullName || "").split(" ")[0].trim().toLowerCase();
-                            const isNameMatch = !!(
-                              sTrainer === tFull ||
-                              sTrainer === tFirst ||
-                              (sTrainer.length > 0 && tFirst.length > 0 && (sTrainer.startsWith(tFirst) || tFirst.startsWith(sTrainer))) ||
-                              (sTrainer.length > 0 && tFull.length > 0 && sTrainer.split(" ")[0] === tFull.split(" ")[0])
-                            );
-                            if (!isIdMatch && !isNameMatch) return false;
-                            if (s.clientName?.toLowerCase().includes("unavailab")) return false;
+                            if (!isTrainerMatch(s, trainer)) return false;
+                            if (
+                              s.clientName?.toLowerCase().includes("unavailab")
+                            )
+                              return false;
                             if (s.status === "Cancelled") return false;
-                            const sDate = safeToDate(s.startTime || s.StartDateTime || s.date);
+                            const sDate = safeToDate(
+                              s.startTime || s.StartDateTime || s.date,
+                            );
                             if (!sDate) return false;
                             return activeTab === "morning"
                               ? sDate.getHours() < 14
@@ -1296,24 +1304,42 @@ export function ClientsView({
                                 const cellId = `${trainer.id}-${slot}`;
                                 if (skippedGridCells.has(cellId)) return null;
 
-                                const cellSessions = todaysSchedules.filter((s) => {
-                                  if (!isTrainerMatch(s, trainer)) return false;
-                                  const tStr = getScheduleSlotStr(s);
-                                  return tStr === slot && s.status !== "Cancelled";
-                                });
+                                const cellSessions = todaysSchedules.filter(
+                                  (s) => {
+                                    if (!isTrainerMatch(s, trainer))
+                                      return false;
+                                    const tStr = getScheduleSlotStr(s);
+                                    return (
+                                      tStr === slot && s.status !== "Cancelled"
+                                    );
+                                  },
+                                );
 
                                 let rowSpan = 1;
                                 if (cellSessions.length === 1) {
                                   const session = cellSessions[0];
-                                  const start = safeToDate(session.startTime || session.StartDateTime || session.date);
-                                  const end = safeToDate(session.endTime || session.EndDateTime);
+                                  const start = safeToDate(
+                                    session.startTime ||
+                                      session.StartDateTime ||
+                                      session.date,
+                                  );
+                                  const end = safeToDate(
+                                    session.endTime || session.EndDateTime,
+                                  );
                                   if (start && end) {
-                                    const duration = (end.getTime() - start.getTime()) / (1000 * 60);
-                                    rowSpan = Math.max(1, Math.round(duration / 30));
+                                    const duration =
+                                      (end.getTime() - start.getTime()) /
+                                      (1000 * 60);
+                                    rowSpan = Math.max(
+                                      1,
+                                      Math.round(duration / 30),
+                                    );
                                     if (rowSpan > 1) {
                                       for (let i = 1; i < rowSpan; i++) {
                                         if (currentSlots[sIdx + i]) {
-                                          skippedGridCells.add(`${trainer.id}-${currentSlots[sIdx + i]}`);
+                                          skippedGridCells.add(
+                                            `${trainer.id}-${currentSlots[sIdx + i]}`,
+                                          );
                                         }
                                       }
                                     }
@@ -1332,50 +1358,88 @@ export function ClientsView({
                                     {cellSessions.length > 0 ? (
                                       <div className="flex flex-col gap-1.5 h-full w-full">
                                         {cellSessions.map((session, sIdx) => {
-                                          const clientObj = findClientForSession(session);
+                                          const clientObj =
+                                            findClientForSession(session);
                                           const workoutSession = clientObj
                                             ? sessions.find(
                                                 (s) =>
                                                   s.clientId === clientObj.id &&
-                                                  new Date(s.createdAt?.toDate?.() || s.date).toDateString() === new Date().toDateString(),
+                                                  new Date(
+                                                    s.createdAt?.toDate?.() ||
+                                                      s.date,
+                                                  ).toDateString() ===
+                                                    new Date().toDateString(),
                                               )
                                             : null;
-                                          const isInSession = workoutSession?.status === "In-Progress";
+                                          const isInSession =
+                                            workoutSession?.status ===
+                                            "In-Progress";
                                           const isCompleted =
                                             session &&
                                             !isInSession &&
                                             (session.status === "Completed" ||
-                                              getMillis(session.startTime || session.StartDateTime) < now.getTime());
-                                          const isUnavailable = session?.clientName?.toLowerCase().includes("unavailab");
-                                          const isAlreadyCompleted = workoutSession?.status === "Completed";
+                                              getMillis(
+                                                session.startTime ||
+                                                  session.StartDateTime,
+                                              ) < now.getTime());
+                                          const isUnavailable =
+                                            session?.clientName
+                                              ?.toLowerCase()
+                                              .includes("unavailab");
+                                          const isAlreadyCompleted =
+                                            workoutSession?.status ===
+                                            "Completed";
                                           const sessionNumber = clientObj
-                                            ? (clientObj.sessionCount || 0) + (isAlreadyCompleted ? 0 : 1)
+                                            ? (clientObj.sessionCount || 0) +
+                                              (isAlreadyCompleted ? 0 : 1)
                                             : 1;
-                                          const isMilestone = sessionNumber === 1 || sessionNumber % 25 === 0;
+                                          const isMilestone =
+                                            sessionNumber === 1 ||
+                                            sessionNumber % 25 === 0;
                                           const hasAlert =
                                             clientObj &&
-                                            ((clientObj.clinicalProfile && clientObj.clinicalProfile.length > 0) ||
+                                            ((clientObj.clinicalProfile &&
+                                              clientObj.clinicalProfile.length >
+                                                0) ||
                                               !!clientObj.clinicalNotes ||
                                               !!clientObj.medicalHistory);
 
-                                          const formatClientName = (name: string) => {
+                                          const formatClientName = (
+                                            name: string,
+                                          ) => {
                                             if (!name) return "";
-                                            const parts = name.trim().split(" ");
+                                            const parts = name
+                                              .trim()
+                                              .split(" ");
                                             if (parts.length > 1) {
                                               return `${parts[0]} ${parts[parts.length - 1][0]}.`;
                                             }
                                             return parts[0];
                                           };
-                                          const formattedClientName = formatClientName(session?.clientName || "");
+                                          const formattedClientName =
+                                            formatClientName(
+                                              session?.clientName || "",
+                                            );
 
-                                          const sDate = safeToDate(session.startTime || session.StartDateTime || session.date);
+                                          const sDate = safeToDate(
+                                            session.startTime ||
+                                              session.StartDateTime ||
+                                              session.date,
+                                          );
                                           const exactTimeStr = sDate
-                                            ? sDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                                            ? sDate.toLocaleTimeString([], {
+                                                hour: "numeric",
+                                                minute: "2-digit",
+                                              })
                                             : "";
 
                                           return (
                                             <div
-                                              key={session.id || session.mindbodyAppointmentId || sIdx}
+                                              key={
+                                                session.id ||
+                                                session.mindbodyAppointmentId ||
+                                                sIdx
+                                              }
                                               onClick={() => {
                                                 if (isUnavailable) return;
                                                 if (clientObj) {
@@ -1399,7 +1463,11 @@ export function ClientsView({
                                                       : isMilestone
                                                         ? "bg-white dark:bg-surface-1 border-2 border-[#F06C22]/85 shadow-[0_0_10px_rgba(240,108,34,0.4)] dark:shadow-[0_0_12px_rgba(240,108,34,0.55)] cursor-pointer hover:border-[#F06C22] hover:shadow-[0_0_16px_rgba(240,108,34,0.7)]"
                                                         : "bg-white dark:bg-surface-1 border-2 border-cyan/85 shadow-[0_0_8px_rgba(56,189,248,0.3)] dark:shadow-[0_0_10px_rgba(56,189,248,0.45)] cursor-pointer hover:border-cyan hover:shadow-[0_0_14px_rgba(56,189,248,0.6)]",
-                                                hasAlert && !isCompleted && !isUnavailable ? "border-l-4 border-l-red-500" : "",
+                                                hasAlert &&
+                                                  !isCompleted &&
+                                                  !isUnavailable
+                                                  ? "border-l-4 border-l-red-500"
+                                                  : "",
                                               )}
                                             >
                                               <div className="flex flex-col w-full h-full justify-between items-start gap-1 relative z-10">
@@ -1417,17 +1485,24 @@ export function ClientsView({
                                                             : "text-slate-900 dark:text-slate-50",
                                                       )}
                                                     >
-                                                      {isUnavailable ? "Unavailable" : formattedClientName}
+                                                      {isUnavailable
+                                                        ? "Unavailable"
+                                                        : formattedClientName}
                                                     </span>
-                                                    {hasAlert && !isCompleted && !isUnavailable && (
-                                                      <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-[pulse_2s_ease-in-out_infinite] shrink-0 mt-1.5" />
-                                                    )}
+                                                    {hasAlert &&
+                                                      !isCompleted &&
+                                                      !isUnavailable && (
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-[pulse_2s_ease-in-out_infinite] shrink-0 mt-1.5" />
+                                                      )}
                                                   </div>
-                                                  {sDate && sDate.getMinutes() % 30 !== 0 && exactTimeStr && (
-                                                    <div className="text-[10px] font-black text-amber-500 uppercase tracking-tight">
-                                                      {exactTimeStr}
-                                                    </div>
-                                                  )}
+                                                  {sDate &&
+                                                    sDate.getMinutes() % 30 !==
+                                                      0 &&
+                                                    exactTimeStr && (
+                                                      <div className="text-[10px] font-black text-amber-500 uppercase tracking-tight">
+                                                        {exactTimeStr}
+                                                      </div>
+                                                    )}
                                                 </div>
 
                                                 {!isUnavailable && (

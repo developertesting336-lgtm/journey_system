@@ -24,6 +24,63 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
 
+// Mindbody User Token Cache
+// Tokens expire after 60 minutes; we refresh at 55 minutes for safety
+const tokenCache: Record<string, { token: string; expiresAt: number }> = {};
+
+async function getMindbodyToken(siteId: string): Promise<string> {
+  const now = Date.now();
+  const cached = tokenCache[siteId];
+  if (cached && cached.expiresAt > now) {
+    return cached.token;
+  }
+
+  const apiKey = process.env.MINDBODY_API_KEY;
+  const sourceName = process.env.MINDBODY_SOURCE_NAME;
+  const sourcePassword = process.env.MINDBODY_SOURCE_PASSWORD;
+
+  if (!apiKey || !sourceName || !sourcePassword) {
+    throw new Error(
+      "MINDBODY_API_KEY, MINDBODY_SOURCE_NAME, and MINDBODY_SOURCE_PASSWORD must be set in .env",
+    );
+  }
+
+  const response = await fetch(
+    "https://api.mindbodyonline.com/public/v6/usertoken/issue",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Key": apiKey,
+        SiteId: String(siteId),
+      },
+      body: JSON.stringify({
+        Username: `_${sourceName}`,
+        Password: sourcePassword,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("Mindbody Token Error:", response.status, errorText);
+    throw new Error(`Failed to issue Mindbody token: ${errorText}`);
+  }
+
+  const data = await response.json();
+  if (!data.AccessToken) {
+    throw new Error("No AccessToken in Mindbody token response");
+  }
+
+  // Cache for 55 minutes (tokens expire at 60 min)
+  tokenCache[siteId] = {
+    token: data.AccessToken,
+    expiresAt: now + 55 * 60 * 1000,
+  };
+
+  return data.AccessToken;
+}
+
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -343,15 +400,31 @@ async function startServer() {
         return res.status(400).json({ error: "siteId is required" });
       }
 
+      // Get User Token for authenticated access
+      let userToken: string | undefined;
+      try {
+        userToken = await getMindbodyToken(String(siteId));
+      } catch (tokenErr: any) {
+        console.warn(
+          "Could not get Mindbody token for staff, proceeding without:",
+          tokenErr.message,
+        );
+      }
+
+      const staffHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Api-Key": mindbodyApiKey,
+        SiteId: String(siteId),
+      };
+      if (userToken) {
+        staffHeaders["Authorization"] = userToken;
+      }
+
       const apiResponse = await fetch(
         `https://api.mindbodyonline.com/public/v6/staff/staff?Limit=200`,
         {
           method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Api-Key": mindbodyApiKey,
-            SiteId: String(siteId),
-          },
+          headers: staffHeaders,
         },
       );
 
@@ -420,68 +493,145 @@ async function startServer() {
           .toISOString()
           .split("T")[0];
 
-      // Fetch staff appointments from Mindbody API v6
-      const params = new URLSearchParams({
-        StartDate: `${start}T00:00:00`,
-        EndDate: `${end}T23:59:59`,
-        Limit: "200",
+      const userToken = await getMindbodyToken(String(siteId));
+
+      let allAppointments: any[] = [];
+      let offset = 0;
+      const limit = 500;
+      let hasMore = true;
+
+      while (hasMore && offset < 2000) {
+        const params = new URLSearchParams({
+          StartDate: `${start}T00:00:00`,
+          EndDate: `${end}T23:59:59`,
+          Limit: String(limit),
+          Offset: String(offset),
+        });
+
+        if (staffIds && Array.isArray(staffIds) && staffIds.length > 0) {
+          staffIds.forEach((id: string | number) =>
+            params.append("StaffIds", String(id)),
+          );
+        }
+
+        const apiResponse = await fetch(
+          `https://api.mindbodyonline.com/public/v6/appointment/staffappointments?${params.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "Api-Key": mindbodyApiKey,
+              SiteId: String(siteId),
+              Authorization: userToken,
+            },
+          },
+        );
+
+        if (!apiResponse.ok) {
+          const errorText = await apiResponse.text();
+          console.error(
+            "Mindbody Staff Appointments Error:",
+            apiResponse.status,
+            errorText,
+          );
+          if (offset === 0) {
+            return res
+              .status(apiResponse.status)
+              .json({ error: `Mindbody API Error: ${errorText}` });
+          }
+          break;
+        }
+
+        const data = await apiResponse.json();
+        const pageAppts = data.Appointments || data.appointments || [];
+        allAppointments.push(...pageAppts);
+
+        const totalResults = data.PaginationResponse?.TotalResults || 0;
+        offset += limit;
+        hasMore =
+          pageAppts.length === limit && allAppointments.length < totalResults;
+      }
+
+      const appointments = allAppointments;
+
+      const uniqueClientIds = [
+        ...new Set(
+          appointments
+            .map((a: any) => a.Client?.Id || a.ClientId)
+            .filter((id: any) => id != null)
+            .map((id: any) => String(id)),
+        ),
+      ];
+
+      const clientNameMap: Record<
+        string,
+        { firstName: string; lastName: string }
+      > = {};
+
+      const BATCH_SIZE = 20;
+      const batchPromises = [];
+
+      for (let i = 0; i < uniqueClientIds.length; i += BATCH_SIZE) {
+        const batch = uniqueClientIds.slice(i, i + BATCH_SIZE);
+        const clientParams = new URLSearchParams();
+        batch.forEach((id: string) => clientParams.append("ClientIds", id));
+        const clientUrl = `https://api.mindbodyonline.com/public/v6/client/clients?${clientParams.toString()}`;
+
+        batchPromises.push(
+          fetch(clientUrl, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "Api-Key": mindbodyApiKey,
+              SiteId: String(siteId),
+              Authorization: userToken,
+            },
+          })
+            .then(async (res) => {
+              if (res.ok) {
+                const clientData = await res.json();
+                return clientData.Clients || [];
+              }
+              return [];
+            })
+            .catch(() => []),
+        );
+      }
+
+      const clientResults = await Promise.all(batchPromises);
+      clientResults.flat().forEach((c: any) => {
+        if (c && c.Id != null) {
+          const cId = String(c.Id);
+          clientNameMap[cId] = {
+            firstName: c.FirstName || "",
+            lastName: c.LastName || "",
+          };
+        }
       });
 
-      if (staffIds && Array.isArray(staffIds) && staffIds.length > 0) {
-        staffIds.forEach((id: string | number) =>
-          params.append("StaffIds", String(id)),
-        );
-      }
+      const normalized = appointments.map((appt: any) => {
+        const clientId = String(appt.Client?.Id || appt.ClientId || "");
+        const clientInfo = clientNameMap[clientId];
 
-      const apiResponse = await fetch(
-        `https://api.mindbodyonline.com/public/v6/appointment/staffappointments?${params.toString()}`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Api-Key": mindbodyApiKey,
-            SiteId: String(siteId),
-          },
-        },
-      );
-
-      if (!apiResponse.ok) {
-        const errorText = await apiResponse.text();
-        console.error(
-          "Mindbody Staff Appointments Error:",
-          apiResponse.status,
-          errorText,
-        );
-        let parsedError = errorText;
-        try {
-          const jsonErr = JSON.parse(errorText);
-          if (jsonErr?.Error?.Message) {
-            parsedError = jsonErr.Error.Message;
-          }
-        } catch (_) {}
-        return res
-          .status(apiResponse.status)
-          .json({ error: `Mindbody API Error: ${parsedError}` });
-      }
-
-      const data = await apiResponse.json();
-      const appointments = data.Appointments || data.appointments || [];
-
-      const normalized = appointments.map((appt: any) => ({
-        Id: appt.Id,
-        StaffId: appt.Staff?.Id || appt.StaffId,
-        StaffFirstName: appt.Staff?.FirstName || appt.StaffFirstName || "",
-        StaffLastName: appt.Staff?.LastName || appt.StaffLastName || "",
-        ClientId: appt.Client?.Id || appt.ClientId || null,
-        ClientFirstName: appt.Client?.FirstName || appt.ClientFirstName || "",
-        ClientLastName: appt.Client?.LastName || appt.ClientLastName || "",
-        StartDateTime: appt.StartDateTime,
-        EndDateTime: appt.EndDateTime,
-        Status: appt.Status,
-        SessionTypeName:
-          appt.SessionType?.Name || appt.SessionTypeName || "Training Session",
-        LocationId: appt.Location?.Id || appt.LocationId || null,
-      }));
+        return {
+          Id: appt.Id,
+          StaffId: appt.Staff?.Id || appt.StaffId,
+          StaffFirstName: appt.Staff?.FirstName || appt.StaffFirstName || "",
+          StaffLastName: appt.Staff?.LastName || appt.StaffLastName || "",
+          ClientId: clientId || null,
+          ClientFirstName:
+            appt.Client?.FirstName || clientInfo?.firstName || "",
+          ClientLastName: appt.Client?.LastName || clientInfo?.lastName || "",
+          StartDateTime: appt.StartDateTime,
+          EndDateTime: appt.EndDateTime,
+          Status: appt.Status,
+          SessionTypeName:
+            appt.SessionType?.Name ||
+            appt.SessionTypeName ||
+            "Training Session",
+          LocationId: appt.Location?.Id || appt.LocationId || null,
+        };
+      });
 
       res.json({ appointments: normalized, total: normalized.length });
     } catch (e: any) {
@@ -501,7 +651,9 @@ async function startServer() {
       );
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       const projectId = config.projectId;
-      const webhookUrl = `https://us-central1-${projectId}.cloudfunctions.net/mindbodyWebhook`;
+      const webhookUrl =
+        req.body?.webhookUrl ||
+        `https://us-central1-${projectId}.cloudfunctions.net/mindbodyWebhook`;
 
       const testPayload = JSON.stringify({
         messageId: `test-${Date.now()}`,
@@ -512,14 +664,22 @@ async function startServer() {
           firstName: "Test",
           lastName: "Client",
           membershipStatus: "Active",
-          siteId: req.body.siteId || "-99",
+          siteId: req.body?.siteId,
         },
       });
 
       let signatureHeader = "test-signature";
       if (webhookSecret) {
         const crypto = await import("crypto");
-        const hmac = crypto.createHmac("sha256", webhookSecret);
+        let key: string | Buffer = webhookSecret;
+        if (webhookSecret.length === 44 && webhookSecret.endsWith("=")) {
+          try {
+            key = Buffer.from(webhookSecret, "base64");
+          } catch {
+            key = webhookSecret;
+          }
+        }
+        const hmac = crypto.createHmac("sha256", key);
         hmac.update(testPayload);
         signatureHeader = hmac.digest("base64");
       }

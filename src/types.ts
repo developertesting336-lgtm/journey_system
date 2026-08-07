@@ -275,6 +275,7 @@ export interface ClientRetentionMeta {
 export interface Client {
   id?: string;
   mindbodyId?: string;
+  mindbodyClientId?: string;
   /** MANDATORY: The studio where the client is billed and primarily trains */
   homeStudioId: string;
   approvedCrossTrainStudioIds?: string[]; // Studio IDs where cross-training is explicitly approved

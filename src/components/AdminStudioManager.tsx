@@ -224,7 +224,7 @@ export function AdminStudioManager({
     try {
       await addDoc(collection(db, "studios"), {
         name: newStudioName,
-        timezone: "UTC", // Default wait for update
+        timezone: "America/New_York",
         createdAt: new Date(),
         ownerId: authTrainer.id,
         mindbodySiteId: trimmedSiteId,

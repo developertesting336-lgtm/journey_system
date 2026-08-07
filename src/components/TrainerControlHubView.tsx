@@ -1526,7 +1526,17 @@ export function TrainerControlHubView({
                                 }}
                               >
                                 <SelectTrigger className="h-10 bg-card border-border text-xs text-foreground font-bold">
-                                  <SelectValue placeholder="Select Studio" />
+                                  <SelectValue placeholder="Select Studio">
+                                    {studios.find(
+                                      (s) =>
+                                        s.id ===
+                                        currentSelectedTrainer.primaryHomeStudioId,
+                                    )?.name ||
+                                      (currentSelectedTrainer.primaryHomeStudioId ===
+                                      "unassigned"
+                                        ? "Unassigned"
+                                        : "Select Studio")}
+                                  </SelectValue>
                                 </SelectTrigger>
                                 <SelectContent className="bg-card border-border text-foreground">
                                   <SelectItem value="unassigned">
