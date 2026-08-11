@@ -90,11 +90,10 @@ export function VictoryHUDScreen({
     parseFloat(l.loadLb || l.weight || "0") || 0;
   const getLogReps = (l: ExerciseLog) => {
     if (l.isTSC || l.isStaticHold) {
-      const secs = parseFloat(
-        l.seconds ||
-          (l.isTSC || l.isStaticHold ? l.reps : "") ||
-          "0",
-      ) || 0;
+      const secs =
+        parseFloat(
+          l.seconds || (l.isTSC || l.isStaticHold ? l.reps : "") || "0",
+        ) || 0;
       return (secs / 30) * 2;
     }
     return parseFloat(l.outcomeReps || l.reps || "0") || 0;
@@ -148,19 +147,46 @@ export function VictoryHUDScreen({
     { name: "Other", value: todayBroad["Other"], color: "bg-indigo-500" },
   ].filter((item) => item.value > 0 || item.name !== "Other");
 
-  // Calculate average TUT
-  const totalTimeUnderTension = logs.reduce((sum, l) => sum + getLogTut(l), 0);
+  // Total session duration
+  const startD = safeToDate(session.startTime) || safeToDate(session.createdAt);
+  const endD = safeToDate(session.endTime) || new Date();
+
+  // Calculate Time Under Tension using background timers (or fallback estimate for legacy logs)
   const totalReps = logs.reduce((sum, l) => sum + getLogReps(l), 0);
-  const avgTutPerRep =
-    totalReps > 0 ? (totalTimeUnderTension / totalReps).toFixed(1) : "0";
+  const sessionDurationMs = startD
+    ? Math.max(0, endD.getTime() - startD.getTime())
+    : 0;
+  const sessionDurationSeconds = sessionDurationMs / 1000;
+  const numMachines = logs.length || 1;
+  const fallbackTimePerMachineSeconds = sessionDurationSeconds / numMachines;
+
+  const estimatedTotalTUT = logs.reduce((sum, l) => {
+    // Time Under Tension = the actual time spent on the machine under load.
+    // Use the exact background timer if available, otherwise the per-machine session estimate.
+    // We do NOT divide by reps — the full machine duration IS the TUT regardless of rep count.
+    const machineDuration = l.machineDurationSeconds ?? l.totalTimeUnderLoad;
+    if (machineDuration !== undefined && machineDuration > 0) {
+      return sum + machineDuration;
+    }
+    return sum + fallbackTimePerMachineSeconds;
+  }, 0);
+
+  const estimatedTUTDisplay =
+    estimatedTotalTUT >= 60
+      ? `${Math.floor(estimatedTotalTUT / 60)}:${Math.floor(
+          estimatedTotalTUT % 60,
+        )
+          .toString()
+          .padStart(2, "0")}`
+      : `${Math.round(estimatedTotalTUT)}`;
+
+  const estimatedTUTUnit = estimatedTotalTUT >= 60 ? "" : "s";
 
   // Calculate max strength sets
   const maxStrengthSets = logs.filter((l) => (l.repQuality || 0) >= 3).length;
   const totalSets = logs.length;
 
-  // Total session duration
-  const startD = safeToDate(session.startTime) || safeToDate(session.createdAt);
-  const endD = safeToDate(session.endTime) || new Date();
+  // Duration formatting
 
   let durationFormat = "0:00";
   if (startD) {
@@ -193,9 +219,9 @@ export function VictoryHUDScreen({
     },
     {
       id: "tut",
-      label: "AVG TUT / REP",
-      value: avgTutPerRep,
-      unit: "s",
+      label: "EST. TIME UNDER TENSION",
+      value: estimatedTUTDisplay,
+      unit: estimatedTUTUnit,
       variant: "default" as const,
     },
     {
@@ -209,7 +235,9 @@ export function VictoryHUDScreen({
     {
       id: "reps",
       label: "TOTAL REPS",
-      value: totalReps,
+      value: Number.isInteger(totalReps)
+        ? totalReps
+        : parseFloat(totalReps.toFixed(1)),
       variant: "default" as const,
     },
     {

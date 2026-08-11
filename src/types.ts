@@ -276,6 +276,7 @@ export interface Client {
   id?: string;
   mindbodyId?: string;
   mindbodyClientId?: string;
+  photoUrl?: string;
   /** MANDATORY: The studio where the client is billed and primarily trains */
   homeStudioId: string;
   approvedCrossTrainStudioIds?: string[]; // Studio IDs where cross-training is explicitly approved
@@ -423,6 +424,8 @@ export interface WorkoutSession {
   date: string;
   trainerInitials: string;
   trainerId?: string;
+  mindbodyClientId?: string;
+  clientName?: string;
   /** Who originally initiated the session document (Soft Lock Architecture) */
   startedByTrainerId?: string;
   /** Activity checkpoint updated during logs to detect abandonment (Lazy Cleanup) */
@@ -486,6 +489,8 @@ export interface ExerciseLog {
   timeSpent?: string;
   totalTimeUnderLoad?: number;
   averageTimePerRep?: number;
+  machineStartedAt?: any;
+  machineDurationSeconds?: number;
   side?: "Left" | "Right";
   notes?: string;
   machineSettings?: Record<string, string>; // Settings used for this specific set

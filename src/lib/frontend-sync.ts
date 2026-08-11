@@ -195,6 +195,21 @@ export async function executeFrontendMasterSync(
           const clientName = extractClientName(summary, description);
           const clientId = findClientForTrainerSync(clientName, trainer.primaryHomeStudioId);
           
+          // If we matched a client but their profile doesn't have the mindbodyClientId yet
+          // Note: In iCal subscription sync, we do not have a separate numerical mbClientId.
+          // However, we can use the clientName from the event to help with mapping if needed,
+          // or if they have an iCal association, we can set mindbody_name.
+          if (clientId) {
+            const matchedClient = clientsData.find(c => c.id === clientId);
+            if (matchedClient && !matchedClient.mindbody_name) {
+              batch.update(doc(db, 'clients', clientId), {
+                mindbody_name: clientName
+              });
+              matchedClient.mindbody_name = clientName;
+              batchCount++;
+            }
+          }
+
           const isCancelled = 
             (ev.status && typeof ev.status === 'string' && ev.status.toUpperCase() === 'CANCELLED') ||
             summary.toLowerCase().includes('cancel') ||

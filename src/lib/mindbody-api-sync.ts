@@ -27,6 +27,14 @@ export interface MindbodyAppointment {
   ClientId?: string;
   ClientFirstName?: string;
   ClientLastName?: string;
+  ClientPhone?: string;
+  ClientEmail?: string;
+  ClientDOB?: string;
+  ClientGender?: string;
+  ClientAddress?: string;
+  ClientPhotoUrl?: string;
+  ClientEmergencyName?: string;
+  ClientEmergencyPhone?: string;
   StartDateTime: string;
   EndDateTime: string;
   Status?: string;
@@ -307,6 +315,60 @@ export async function syncMindbodySchedules(
           mbClientId,
         );
 
+        if (clientId) {
+          const matchedClient = allClients.find((c) => c.id === clientId);
+          if (matchedClient) {
+            const clientUpdates: Record<string, any> = {};
+            if (mbClientId && !matchedClient.mindbodyClientId) {
+              clientUpdates.mindbodyClientId = mbClientId;
+              matchedClient.mindbodyClientId = mbClientId;
+            }
+            if (appt.ClientPhone && !matchedClient.phone) {
+              clientUpdates.phone = appt.ClientPhone;
+              matchedClient.phone = appt.ClientPhone;
+            }
+            if (appt.ClientEmail && !matchedClient.email) {
+              clientUpdates.email = appt.ClientEmail;
+              matchedClient.email = appt.ClientEmail;
+            }
+            if (appt.ClientDOB && !matchedClient.dateOfBirth) {
+              clientUpdates.dateOfBirth = appt.ClientDOB;
+              matchedClient.dateOfBirth = appt.ClientDOB;
+            }
+            if (appt.ClientGender && !matchedClient.gender) {
+              clientUpdates.gender = appt.ClientGender;
+              matchedClient.gender = appt.ClientGender;
+            }
+            if (appt.ClientAddress && !matchedClient.address) {
+              clientUpdates.address = appt.ClientAddress;
+              matchedClient.address = appt.ClientAddress;
+            }
+            if (appt.ClientPhotoUrl && !matchedClient.photoUrl) {
+              clientUpdates.photoUrl = appt.ClientPhotoUrl;
+              matchedClient.photoUrl = appt.ClientPhotoUrl;
+            }
+            if (
+              appt.ClientEmergencyName &&
+              !matchedClient.emergencyContactName
+            ) {
+              clientUpdates.emergencyContactName = appt.ClientEmergencyName;
+              matchedClient.emergencyContactName = appt.ClientEmergencyName;
+            }
+            if (
+              appt.ClientEmergencyPhone &&
+              !matchedClient.emergencyContactPhone
+            ) {
+              clientUpdates.emergencyContactPhone = appt.ClientEmergencyPhone;
+              matchedClient.emergencyContactPhone = appt.ClientEmergencyPhone;
+            }
+
+            if (Object.keys(clientUpdates).length > 0) {
+              batch.update(doc(db, "clients", clientId), clientUpdates);
+              batchCount++;
+            }
+          }
+        }
+
         const startTime = Timestamp.fromDate(new Date(appt.StartDateTime));
         const endTime = Timestamp.fromDate(new Date(appt.EndDateTime));
 
@@ -396,6 +458,9 @@ export async function syncMindbodySchedules(
     if (batchCount > 0) {
       await batch.commit();
     }
+
+    console.log("✅ [REFRESH SCHEDULE] SYNC COMPLETE RESULT:", result);
+    return result;
   } catch (err: any) {
     result.errors.push(err.message);
   }

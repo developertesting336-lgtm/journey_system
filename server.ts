@@ -565,7 +565,18 @@ async function startServer() {
 
       const clientNameMap: Record<
         string,
-        { firstName: string; lastName: string }
+        {
+          firstName: string;
+          lastName: string;
+          email: string;
+          phone: string;
+          dateOfBirth: string;
+          gender: string;
+          address: string;
+          photoUrl: string;
+          emergencyContactName: string;
+          emergencyContactPhone: string;
+        }
       > = {};
 
       const BATCH_SIZE = 20;
@@ -605,6 +616,14 @@ async function startServer() {
           clientNameMap[cId] = {
             firstName: c.FirstName || "",
             lastName: c.LastName || "",
+            email: c.Email || "",
+            phone: c.MobilePhone || c.HomePhone || c.WorkPhone || "",
+            dateOfBirth: c.BirthDate ? c.BirthDate.split("T")[0] : "",
+            gender: c.Gender || "",
+            address: c.AddressLine1 || "",
+            photoUrl: c.PhotoUrl || "",
+            emergencyContactName: c.EmergencyContactInfoName || "",
+            emergencyContactPhone: c.EmergencyContactInfoPhone || "",
           };
         }
       });
@@ -622,6 +641,14 @@ async function startServer() {
           ClientFirstName:
             appt.Client?.FirstName || clientInfo?.firstName || "",
           ClientLastName: appt.Client?.LastName || clientInfo?.lastName || "",
+          ClientEmail: appt.Client?.Email || clientInfo?.email || "",
+          ClientPhone: appt.Client?.MobilePhone || appt.Client?.HomePhone || clientInfo?.phone || "",
+          ClientDOB: clientInfo?.dateOfBirth || "",
+          ClientGender: clientInfo?.gender || "",
+          ClientAddress: clientInfo?.address || "",
+          ClientPhotoUrl: appt.Client?.PhotoUrl || clientInfo?.photoUrl || "",
+          ClientEmergencyName: clientInfo?.emergencyContactName || "",
+          ClientEmergencyPhone: clientInfo?.emergencyContactPhone || "",
           StartDateTime: appt.StartDateTime,
           EndDateTime: appt.EndDateTime,
           Status: appt.Status,
@@ -639,6 +666,105 @@ async function startServer() {
       res
         .status(500)
         .json({ error: e.message || "Failed to fetch staff appointments" });
+    }
+  });
+
+  app.post("/api/mindbody/client-demographics", async (req, res) => {
+    try {
+      const mindbodyApiKey = process.env.MINDBODY_API_KEY;
+      if (!mindbodyApiKey) {
+        return res
+          .status(500)
+          .json({ error: "MINDBODY_API_KEY environment variable is not set." });
+      }
+
+      const { siteId, mindbodyClientId, clientName } = req.body || {};
+
+      if (!siteId) {
+        return res.status(400).json({ error: "siteId is required" });
+      }
+
+      const sitesToTry = [String(siteId)];
+      if (String(siteId) !== "-99") sitesToTry.push("-99");
+
+      let mbClients: any[] = [];
+      let lastApiError = "";
+
+      for (const currentSiteId of sitesToTry) {
+        if (mbClients.length > 0) break;
+        try {
+          const userToken = await getMindbodyToken(currentSiteId);
+
+          // 1. Try by Client ID
+          if (mindbodyClientId) {
+            const url = `https://api.mindbodyonline.com/public/v6/client/clients?ClientIds=${encodeURIComponent(String(mindbodyClientId))}`;
+            const res1 = await fetch(url, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "Api-Key": mindbodyApiKey,
+                SiteId: currentSiteId,
+                Authorization: userToken,
+              },
+            });
+            if (res1.ok) {
+              const data1 = await res1.json();
+              mbClients = data1.Clients || [];
+            } else {
+              lastApiError = await res1.text();
+              console.warn(`Mindbody ClientIds lookup failed (Site ${currentSiteId}):`, res1.status, lastApiError);
+            }
+          }
+
+          // 2. Fallback to SearchText
+          if (mbClients.length === 0 && clientName) {
+            const url = `https://api.mindbodyonline.com/public/v6/client/clients?SearchText=${encodeURIComponent(String(clientName))}`;
+            const res2 = await fetch(url, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "Api-Key": mindbodyApiKey,
+                SiteId: currentSiteId,
+                Authorization: userToken,
+              },
+            });
+            if (res2.ok) {
+              const data2 = await res2.json();
+              mbClients = data2.Clients || [];
+            } else {
+              lastApiError = await res2.text();
+              console.warn(`Mindbody SearchText lookup failed (Site ${currentSiteId}):`, res2.status, lastApiError);
+            }
+          }
+        } catch (err: any) {
+          console.warn(`Mindbody search error for Site ID ${currentSiteId}:`, err);
+          lastApiError = err.message || String(err);
+        }
+      }
+
+      if (mbClients.length === 0) {
+        return res
+          .status(404)
+          .json({ error: lastApiError ? `MindBody API Response: ${lastApiError}` : `Client "${mindbodyClientId || clientName}" not found in MindBody Site ID ${siteId}` });
+      }
+
+      const client = mbClients[0];
+      return res.json({
+        mindbodyClientId: String(client.Id),
+        firstName: client.FirstName,
+        lastName: client.LastName,
+        email: client.Email || "",
+        phone: client.MobilePhone || client.HomePhone || "",
+        dateOfBirth: client.BirthDate ? client.BirthDate.split("T")[0] : "",
+        gender: client.Gender || "",
+        address: client.AddressLine1 || "",
+        photoUrl: client.PhotoUrl || "",
+        emergencyContactName: client.EmergencyContactInfoName || "",
+        emergencyContactPhone: client.EmergencyContactInfoPhone || "",
+      });
+    } catch (error: any) {
+      console.error("Error fetching MindBody client demographics:", error);
+      return res.status(500).json({ error: error.message || "Server error" });
     }
   });
 

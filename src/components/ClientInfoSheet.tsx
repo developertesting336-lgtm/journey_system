@@ -9,6 +9,7 @@ import {
   Key,
   Shield,
   Image as ImageIcon,
+  RefreshCw,
 } from "lucide-react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -54,6 +55,7 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
   const [formData, setFormData] = useState<Partial<Client>>({});
   const [dirtyFields, setDirtyFields] = useState<Set<keyof Client>>(new Set());
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncingMb, setIsSyncingMb] = useState(false);
   const [activeTab, setActiveTab] = useState("identity");
 
   // Initialize form state
@@ -64,7 +66,9 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
         firstName: client.firstName || "",
         lastName: client.lastName || "",
         mindbodyId: client.mindbodyId || "",
+        mindbodyClientId: client.mindbodyClientId || client.mindbodyId || "",
         mindbody_name: client.mindbody_name || "",
+        photoUrl: client.photoUrl || "",
         dateOfBirth: client.dateOfBirth || "",
         gender: client.gender || "",
         phone: client.phone || "",
@@ -302,15 +306,28 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
               <TabsContent value="identity" className="m-0 space-y-8">
                 <div className="flex flex-col gap-6">
                   <div className="flex items-center gap-4 p-6 border border-slate-200 dark:border-slate-800 rounded-3xl bg-slate-50 dark:bg-slate-800/60 shadow-sm">
-                    <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0">
-                      <ImageIcon strokeWidth={1} size={36} />
+                    <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0 overflow-hidden">
+                      {formData.photoUrl || client.photoUrl ? (
+                        <img
+                          src={formData.photoUrl || client.photoUrl}
+                          alt={`${formData.firstName || ""} ${formData.lastName || ""}`}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <ImageIcon strokeWidth={1} size={36} />
+                      )}
                     </div>
                     <div className="flex-1">
                       <p className="text-[12px] font-black uppercase tracking-widest text-slate-800 dark:text-slate-200">
                         Avatar Profile
                       </p>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        Upload photo feature pending integration.
+                        {formData.photoUrl || client.photoUrl
+                          ? "Synced automatically from MindBody profile."
+                          : "Auto-synced from MindBody or uploaded via trainer profile."}
                       </p>
                     </div>
                   </div>
@@ -367,13 +384,65 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
                       </Select>
                     </div>
                     <div className="space-y-2 flex flex-col">
-                      <FormLabel>MindBody ID</FormLabel>
+                      <div className="flex items-center justify-between">
+                        <FormLabel>MindBody ID</FormLabel>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={isSyncingMb}
+                          onClick={async () => {
+                            const mbId = (formData as any).mindbodyClientId || (formData as any).mindbodyId;
+                            const searchName = `${formData.firstName || ""} ${formData.lastName || ""}`.trim();
+                            if (!mbId && !searchName) return;
+                            setIsSyncingMb(true);
+                            try {
+                              const targetStudio = studios.find(s => s.id === client.homeStudioId) || studios.find(s => s.mindbodySiteId) || studios[0];
+                              const siteId = targetStudio?.mindbodySiteId ? String(targetStudio.mindbodySiteId).trim() : "-99";
+
+                              const res = await fetch("/api/mindbody/client-demographics", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  siteId,
+                                  mindbodyClientId: mbId || undefined,
+                                  clientName: searchName || undefined,
+                                }),
+                              });
+                              if (!res.ok) {
+                                const err = await res.json().catch(() => ({}));
+                                throw new Error(err.error || "Client not found in MindBody");
+                              }
+                              const mbData = await res.json();
+                              if (mbData.mindbodyClientId) {
+                                updateField("mindbodyClientId" as any, mbData.mindbodyClientId);
+                                updateField("mindbodyId" as any, mbData.mindbodyClientId);
+                              }
+                              if (mbData.phone) updateField("phone", mbData.phone);
+                              if (mbData.email) updateField("email", mbData.email);
+                              if (mbData.dateOfBirth) updateField("dateOfBirth", mbData.dateOfBirth);
+                              if (mbData.gender) updateField("gender", mbData.gender);
+                              if (mbData.address) updateField("address", mbData.address);
+                              if (mbData.photoUrl) updateField("photoUrl", mbData.photoUrl);
+                            } catch (e: any) {
+                              alert(e.message || "Failed to sync MindBody demographics");
+                            } finally {
+                              setIsSyncingMb(false);
+                            }
+                          }}
+                          className="h-6 text-[11px] font-bold text-cyan hover:text-cyan/80 p-0 hover:bg-transparent flex items-center gap-1"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isSyncingMb ? "animate-spin" : ""}`} />
+                          {isSyncingMb ? "Syncing..." : "Sync from MindBody"}
+                        </Button>
+                      </div>
                       <Input
                         className="h-12 border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 font-medium font-mono text-sm"
-                        value={(formData as any).mindbodyId || ""}
-                        onChange={(e) =>
-                          updateField("mindbodyId" as any, e.target.value)
-                        }
+                        value={(formData as any).mindbodyClientId || (formData as any).mindbodyId || ""}
+                        onChange={(e) => {
+                          updateField("mindbodyClientId" as any, e.target.value);
+                          updateField("mindbodyId" as any, e.target.value);
+                        }}
                         placeholder="e.g. 100005423"
                       />
                     </div>

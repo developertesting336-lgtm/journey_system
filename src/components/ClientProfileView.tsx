@@ -2728,7 +2728,7 @@ export function ClientProfileView({
                       <>
                         <span>
                           {(() => {
-                            const dateVal = scheduledSessions[0].date;
+                            const dateVal = scheduledSessions[0].startTime;
                             if (!dateVal) return "N/A";
                             let d: Date;
                             if (typeof (dateVal as any).toDate === "function") {

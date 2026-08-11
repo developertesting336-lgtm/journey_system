@@ -1062,6 +1062,7 @@ export function WorkoutTrackerView({
             {
               timeSpent: rawTimeDiff.toString(),
               totalTimeUnderLoad: timeDiff,
+              machineDurationSeconds: timeDiff,
               ...(avgTime !== undefined && { averageTimePerRep: avgTime }),
             },
             "Left",
@@ -1104,6 +1105,7 @@ export function WorkoutTrackerView({
             {
               timeSpent: rawTimeDiff.toString(),
               totalTimeUnderLoad: timeDiff,
+              machineDurationSeconds: timeDiff,
               ...(avgTime !== undefined && { averageTimePerRep: avgTime }),
             },
             "Right",
@@ -1145,6 +1147,7 @@ export function WorkoutTrackerView({
           updateLogMultiple(currentSession.id, mId, {
             timeSpent: rawTimeDiff.toString(),
             totalTimeUnderLoad: timeDiff,
+            machineDurationSeconds: timeDiff,
             ...(avgTime !== undefined && { averageTimePerRep: avgTime }),
           });
           lastMachineLoggedAt.current = Date.now();
@@ -1638,6 +1641,8 @@ export function WorkoutTrackerView({
 
       const sessionData: any = {
         clientId,
+        mindbodyClientId: selectedClient?.mindbodyClientId || selectedClient?.mindbodyId || null,
+        clientName: selectedClient ? `${selectedClient.firstName} ${selectedClient.lastName}`.trim() : "",
         homeStudioId: clientHomeStudioId, // Explicit homeStudioId security stamp
         routineId: routineId || null,
         hostedAtStudioId: currentStudioId,
@@ -1908,6 +1913,14 @@ export function WorkoutTrackerView({
   };
 
   const handleEndSessionPress = () => {
+    if (currentSession?.id && !currentSession.endTime) {
+      const now = new Date();
+      updateDoc(doc(db, "sessions", currentSession.id), {
+        endTime: serverTimestamp(),
+      }).catch(console.error);
+      setCurrentSession((prev) => prev ? { ...prev, endTime: now } : prev);
+    }
+    setIsPaused(true);
     setShowEndConfirmation(true);
   };
 
