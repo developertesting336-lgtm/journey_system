@@ -15,6 +15,7 @@ import {
   ClipboardList,
   PlusCircle,
   History,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -430,7 +431,7 @@ function PerformanceEntryDialog({
             </Label>
             <div className="flex items-center justify-between w-full h-14 px-1">
               <button
-                className="w-11 h-11 rounded-xl bg-slate-700/50 text-slate-500 dark:text-slate-400 font-black text-lg flex items-center justify-center active:scale-95 transition-transform border border-slate-300/30"
+                className="w-11 h-11 rounded-xl bg-slate-200 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-black text-lg flex items-center justify-center active:scale-95 transition-transform border border-slate-300 dark:border-slate-700"
                 onClick={() => adjustCurrent(-2)}
               >
                 -2
@@ -485,7 +486,7 @@ function PerformanceEntryDialog({
               {!isTorsoFull ? (
                 <div className="flex items-center justify-between w-full h-12 px-1">
                   <button
-                    className="w-10 h-10 rounded-xl bg-slate-700/50 text-slate-500 dark:text-slate-400 font-black text-lg flex items-center justify-center active:scale-95 transition-transform border border-slate-300/30 shrink-0"
+                    className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-black text-lg flex items-center justify-center active:scale-95 transition-transform border border-slate-300 dark:border-slate-700 shrink-0"
                     onClick={() => adjustReps(-1)}
                   >
                     -1
@@ -588,9 +589,16 @@ function PerformanceEntryDialog({
             </div>
 
             {/* Quality Rating */}
-            <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex flex-col items-center relative">
-              <Label className="text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-widest text-center block mb-2.5">
-                Set Quality / RPE
+            <div
+              className={`bg-slate-50 dark:bg-slate-950 border rounded-2xl p-3 flex flex-col items-center relative transition-colors ${!quality || quality === 0 ? "border-amber-500/50 dark:border-amber-500/40" : "border-slate-200 dark:border-slate-800"}`}
+            >
+              <Label className="text-[11px] font-black uppercase tracking-widest text-center block mb-2.5 items-center gap-1 text-slate-500 dark:text-slate-400">
+                Set Quality / RPE{" "}
+                {!quality && (
+                  <span className="text-amber-500 font-bold text-xs">
+                    * Required
+                  </span>
+                )}
               </Label>
               <div className="flex items-center gap-1.5 w-full h-9">
                 <button
@@ -701,8 +709,10 @@ function PerformanceEntryDialog({
             Cancel
           </Button>
           <Button
-            className="h-12 rounded-xl font-black uppercase text-[11px] tracking-widest bg-orange-500 dark:bg-orange-600 text-white hover:bg-orange-600 dark:hover:bg-orange-700 shadow-[0_4px_15px_rgba(240,108,34,0.4)] border-none active:scale-95 transition-all"
-            onClick={() =>
+            className="h-12 rounded-xl font-black uppercase text-[11px] tracking-widest bg-orange-500 dark:bg-orange-600 text-white hover:bg-orange-600 dark:hover:bg-orange-700 shadow-[0_4px_15px_rgba(240,108,34,0.4)] border-none active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+            disabled={!quality || quality === 0}
+            onClick={() => {
+              if (!quality || quality === 0) return;
               onSave(
                 current.toString(),
                 reps.toString(),
@@ -710,10 +720,10 @@ function PerformanceEntryDialog({
                 isHold,
                 side,
                 repsRt.toString(),
-              )
-            }
+              );
+            }}
           >
-            Save Set
+            {quality ? "Save Set" : "Select Quality To Save"}
           </Button>
         </div>
       </DialogContent>
@@ -968,6 +978,7 @@ export function WorkoutTrackerView({
   const [editingWeightMachineId, setEditingWeightMachineId] = useState<
     string | null
   >(null);
+  const [isStaticHoldOverride, setIsStaticHoldOverride] = useState(false);
   const [historyMachineId, setHistoryMachineId] = useState<string | null>(null);
   const [isSettingUpRoutine, setIsSettingUpRoutine] = useState(false);
   const [showAllMachines, setShowAllMachines] = useState(true);
@@ -1252,20 +1263,25 @@ export function WorkoutTrackerView({
     }
 
     if (activeFocusMachineId) {
-      await updateLog(
-        currentSession.id,
-        activeFocusMachineId,
-        "seconds",
-        seconds.toString(),
-      );
-      await updateLog(currentSession.id, activeFocusMachineId, "reps", "0");
-      await updateLog(currentSession.id, activeFocusMachineId, "isTSC", true);
-      await updateLog(
-        currentSession.id,
-        activeFocusMachineId,
-        "isStaticHold",
-        true,
-      );
+      setIsStaticHoldOverride(true);
+      setEditingWeightMachineId(activeFocusMachineId);
+      if (seconds > 0) {
+        const key = `${currentSession.id}_${activeFocusMachineId}`;
+        await updateLog(
+          currentSession.id,
+          activeFocusMachineId,
+          "seconds",
+          seconds.toString(),
+        );
+        await updateLog(currentSession.id, activeFocusMachineId, "reps", "0");
+        await updateLog(currentSession.id, activeFocusMachineId, "isTSC", true);
+        await updateLog(
+          currentSession.id,
+          activeFocusMachineId,
+          "isStaticHold",
+          true,
+        );
+      }
     }
   };
   const [searchTerm, setSearchTerm] = useState("");
@@ -1647,8 +1663,13 @@ export function WorkoutTrackerView({
 
       const sessionData: any = {
         clientId,
-        mindbodyClientId: selectedClient?.mindbodyClientId || selectedClient?.mindbodyId || null,
-        clientName: selectedClient ? `${selectedClient.firstName} ${selectedClient.lastName}`.trim() : "",
+        mindbodyClientId:
+          selectedClient?.mindbodyClientId ||
+          selectedClient?.mindbodyId ||
+          null,
+        clientName: selectedClient
+          ? `${selectedClient.firstName} ${selectedClient.lastName}`.trim()
+          : "",
         homeStudioId: clientHomeStudioId, // Explicit homeStudioId security stamp
         routineId: routineId || null,
         hostedAtStudioId: currentStudioId,
@@ -1924,7 +1945,7 @@ export function WorkoutTrackerView({
       updateDoc(doc(db, "sessions", currentSession.id), {
         endTime: serverTimestamp(),
       }).catch(console.error);
-      setCurrentSession((prev) => prev ? { ...prev, endTime: now } : prev);
+      setCurrentSession((prev) => (prev ? { ...prev, endTime: now } : prev));
     }
     setIsPaused(true);
     setShowEndConfirmation(true);
@@ -2095,15 +2116,22 @@ export function WorkoutTrackerView({
     setShowCancelConfirmation(true);
   };
 
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
+
   const confirmScrapSession = async () => {
-    if (currentSession?.id) {
-      await deleteSession(currentSession.id);
-    } else {
-      setCurrentSession(null);
-      setLogs({});
-      setSelectedClientId(null);
-      setView("clients");
-      setShowCancelConfirmation(false);
+    setIsDeletingSession(true);
+    try {
+      if (currentSession?.id) {
+        await deleteSession(currentSession.id);
+      } else {
+        setCurrentSession(null);
+        setLogs({});
+        setSelectedClientId(null);
+        setView("clients");
+        setShowCancelConfirmation(false);
+      }
+    } finally {
+      setIsDeletingSession(false);
     }
   };
 
@@ -2395,6 +2423,16 @@ export function WorkoutTrackerView({
             </Button>
 
             <Button
+              variant="outline"
+              className="border-red-500/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 h-9 md:h-10 px-3 text-xs md:text-sm font-bold uppercase tracking-wider transition-colors flex-1 md:flex-initial"
+              onClick={() => setShowCancelConfirmation(true)}
+              title="Discard active session without saving"
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" />
+              Discard
+            </Button>
+
+            <Button
               className="bg-cta hover:opacity-90 text-white font-semibold shadow-sm transition-all h-9 md:h-10 px-4 md:px-6 rounded-lg text-xs md:text-sm flex-1 md:flex-initial cursor-pointer"
               onClick={handleEndSessionPress}
             >
@@ -2474,10 +2512,11 @@ export function WorkoutTrackerView({
                     Boolean(x),
                 )
                 .slice(0, 3)}
-              isStaticHold={logL?.isStaticHold}
+              isStaticHold={isStaticHoldOverride || logL?.isStaticHold}
               onClose={() => {
                 setEditingWeightMachineId(null);
                 setEditingWeightSide(undefined);
+                setIsStaticHoldOverride(false);
               }}
               onSave={async (
                 weight,
@@ -2656,21 +2695,6 @@ export function WorkoutTrackerView({
 
                 setEditingWeightMachineId(null);
                 setEditingWeightSide(undefined);
-
-                // Advance UI to the next machine automatically after a brief delay
-                const currentIndex = activeMachineIds.indexOf(
-                  editingWeightMachineId,
-                );
-                if (
-                  currentIndex !== -1 &&
-                  currentIndex < activeMachineIds.length - 1
-                ) {
-                  setTimeout(() => {
-                    const nextMachineId = activeMachineIds[currentIndex + 1];
-                    setEditingWeightMachineId(nextMachineId);
-                    setEditingWeightSide(undefined);
-                  }, 150);
-                }
               }}
             />
           );
@@ -2843,35 +2867,53 @@ export function WorkoutTrackerView({
       {/* Scrap Session Confirmation Dialog */}
       <Dialog
         open={showCancelConfirmation}
-        onOpenChange={setShowCancelConfirmation}
+        onOpenChange={(v) => !isDeletingSession && setShowCancelConfirmation(v)}
       >
         <DialogContent className="sm:max-w-100 rounded-[32px] p-0 overflow-hidden border-none shadow-2xl dark:shadow-none">
           <div className="bg-white dark:bg-bg-dark p-8 text-slate-900 dark:text-white space-y-3">
-            <div className="w-12 h-12 bg-red-500 rounded-2xl flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(239,68,68,0.4)]">
-              <Trash2 className="w-6 h-6 text-slate-900 dark:text-white" />
+            <div
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-2 transition-all ${isDeletingSession ? "bg-red-500/20 text-red-500 animate-pulse" : "bg-red-500 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)]"}`}
+            >
+              {isDeletingSession ? (
+                <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+              ) : (
+                <Trash2 className="w-6 h-6" />
+              )}
             </div>
             <h3 className="text-2xl font-black italic uppercase tracking-tight">
-              Scrap Active Session?
+              {isDeletingSession
+                ? "Deleting Session..."
+                : "Scrap Active Session?"}
             </h3>
             <p className="text-slate-500 dark:text-slate-400 font-medium text-sm leading-relaxed">
-              Are you sure you want to cancel this session? All data logged so
-              far will be scrapped and will not be recorded in the database.
+              {isDeletingSession
+                ? "Scrapping all logged sets, timers, and notes. Cleaning database records..."
+                : "Are you sure you want to cancel this session? All data logged so far will be scrapped and will not be recorded in the database."}
             </p>
           </div>
 
-          <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white dark:bg-bg-dark">
+          <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white dark:bg-bg-dark border-t border-slate-100 dark:border-slate-800">
             <Button
               variant="outline"
-              className="h-14 rounded-2xl font-black uppercase tracking-widest text-xs border-2 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-surface-2"
+              disabled={isDeletingSession}
+              className="h-14 rounded-2xl font-black uppercase tracking-widest text-xs border-2 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-surface-2 disabled:opacity-50"
               onClick={() => setShowCancelConfirmation(false)}
             >
               Resume Session
             </Button>
             <Button
-              className="h-14 rounded-2xl font-black uppercase tracking-widest text-xs bg-red-600 text-white shadow-lg shadow-red-200 dark:shadow-none hover:bg-red-700"
+              disabled={isDeletingSession}
+              className="h-14 rounded-2xl font-black uppercase tracking-widest text-xs bg-red-600 text-white shadow-lg shadow-red-200 dark:shadow-none hover:bg-red-700 disabled:opacity-80 flex items-center justify-center gap-2"
               onClick={confirmScrapSession}
             >
-              Scrap Session
+              {isDeletingSession ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                "Scrap Session"
+              )}
             </Button>
           </div>
         </DialogContent>
