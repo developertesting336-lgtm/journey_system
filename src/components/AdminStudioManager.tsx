@@ -209,17 +209,6 @@ export function AdminStudioManager({
     }
 
     const trimmedSiteId = newStudioSiteId.trim();
-    const isDuplicate = allStudios.some(
-      (s) => s.mindbodySiteId === trimmedSiteId,
-    );
-
-    if (isDuplicate) {
-      toastError(
-        "This Mindbody Site ID is already assigned to another studio. It must be unique.",
-      );
-      return;
-    }
-
     setIsSaving(true);
     try {
       await addDoc(collection(db, "studios"), {
@@ -379,18 +368,6 @@ export function AdminStudioManager({
 
     if (!siteIdVal) {
       toastError("Mindbody Site ID is required.");
-      setIsSaving(false);
-      return;
-    }
-
-    const isDuplicate = allStudios.some(
-      (s) => s.id !== selectedStudio.id && s.mindbodySiteId === siteIdVal,
-    );
-
-    if (isDuplicate) {
-      toastError(
-        "This Mindbody Site ID is already assigned to another studio. It must be unique.",
-      );
       setIsSaving(false);
       return;
     }
