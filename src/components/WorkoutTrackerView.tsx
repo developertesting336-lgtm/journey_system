@@ -1034,10 +1034,11 @@ export function WorkoutTrackerView({
           logL?.repQuality &&
           !logL?.timeSpent
         ) {
+          const manualSeconds = logL?.seconds ? parseFloat(logL.seconds) : 0;
           const rawTimeDiff = Math.floor(
             (Date.now() - lastMachineLoggedAt.current) / 1000,
           );
-          const timeDiff = Math.max(
+          const computedTimeDiff = Math.max(
             0,
             Math.floor(
               (Date.now() -
@@ -1046,6 +1047,7 @@ export function WorkoutTrackerView({
                 1000,
             ),
           );
+          const timeDiff = manualSeconds > 0 ? manualSeconds : computedTimeDiff;
           const isStatic =
             logL.isStaticHold ||
             logL.isTSC ||
@@ -1077,10 +1079,11 @@ export function WorkoutTrackerView({
           logR?.repQuality &&
           !logR?.timeSpent
         ) {
+          const manualSeconds = logR?.seconds ? parseFloat(logR.seconds) : 0;
           const rawTimeDiff = Math.floor(
             (Date.now() - lastMachineLoggedAt.current) / 1000,
           );
-          const timeDiff = Math.max(
+          const computedTimeDiff = Math.max(
             0,
             Math.floor(
               (Date.now() -
@@ -1089,6 +1092,7 @@ export function WorkoutTrackerView({
                 1000,
             ),
           );
+          const timeDiff = manualSeconds > 0 ? manualSeconds : computedTimeDiff;
           const isStatic =
             logR.isStaticHold ||
             logR.isTSC ||
@@ -1122,10 +1126,11 @@ export function WorkoutTrackerView({
           log?.repQuality &&
           !log?.timeSpent
         ) {
+          const manualSeconds = log?.seconds ? parseFloat(log.seconds) : 0;
           const rawTimeDiff = Math.floor(
             (Date.now() - lastMachineLoggedAt.current) / 1000,
           );
-          const timeDiff = Math.max(
+          const computedTimeDiff = Math.max(
             0,
             Math.floor(
               (Date.now() -
@@ -1134,6 +1139,7 @@ export function WorkoutTrackerView({
                 1000,
             ),
           );
+          const timeDiff = manualSeconds > 0 ? manualSeconds : computedTimeDiff;
           const isStatic =
             log.isStaticHold ||
             log.isTSC ||

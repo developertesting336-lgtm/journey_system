@@ -10,6 +10,7 @@ import {
   Shield,
   Image as ImageIcon,
   RefreshCw,
+  Maximize,
 } from "lucide-react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -243,14 +244,27 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
             )}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onOpenChange(false)}
-          className="rounded-xl w-12 h-12 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-        >
-          <X className="w-6 h-6" />
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            onClick={() => {
+              onOpenChange(false);
+              window.dispatchEvent(new CustomEvent("open-bulk-import"));
+            }}
+            className="h-12 bg-[#0ea5e9]/10 hover:bg-[#0ea5e9]/20 text-[#38BDF8] border border-[#38BDF8]/30 rounded-xl font-bold uppercase italic tracking-widest px-4 shadow-sm transition-all flex items-center gap-2"
+          >
+            <Maximize className="w-4 h-4" />
+            <span>Open Migration Hub (OCR)</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onOpenChange(false)}
+            className="rounded-xl w-12 h-12 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-hidden flex max-w-7xl w-full mx-auto">

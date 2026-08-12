@@ -16,7 +16,8 @@ import {
   Activity,
   Dumbbell,
   Copy,
-  Plus
+  Plus,
+  ArrowLeft
 } from 'lucide-react';
 import { Client, Machine, Trainer, WorkoutSession, ExerciseLog } from '../types';
 import { processLegacyChart, extractMachineSettingsFromImage, OCRMachineSetting, ValidationSession, ValidationLog, sanitizeImportedSessions, OCRResult } from '../services/geminiService';
@@ -603,15 +604,26 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
   return (
     <div className="w-full flex flex-col gap-6 p-4 sm:p-6 bg-slate-950 min-h-screen text-slate-100">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black tracking-tighter uppercase italic text-white flex items-center gap-2">
-            <Maximize className="w-8 h-8 text-[#F06C22]" />
-            OCR Legacy Pipeline
-          </h1>
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em]">
-            Multimodal Chart Recognition Engine v3.1
-          </p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-900">
+        <div className="flex items-center gap-4">
+          {onComplete && (
+            <button
+              type="button"
+              onClick={onComplete}
+              className="h-10 w-10 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-all shrink-0 shadow-sm"
+              title="Back to Client Profile"
+            >
+              <ArrowLeft className="w-5 h-5 text-[#F06C22]" />
+            </button>
+          )}
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tighter uppercase italic text-white flex items-center gap-2">
+              OCR Legacy Pipeline
+            </h1>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">
+              Multimodal Chart Recognition Engine v3.1
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
