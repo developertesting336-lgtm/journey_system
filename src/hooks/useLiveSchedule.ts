@@ -3,6 +3,7 @@ import { collection, query, where, orderBy, onSnapshot, getDocs, Timestamp, Quer
 import { db } from "../firebase";
 import { Client, ScheduleEntry } from "../types";
 import { OperationType, handleFirestoreError } from "../lib/firestore-errors";
+import { startOfStudioDay, endOfStudioDay } from "../lib/studio-time";
 
 export function useLiveSchedule(activeStudioId: string | null, isReady: boolean) {
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
@@ -36,11 +37,10 @@ export function useLiveSchedule(activeStudioId: string | null, isReady: boolean)
         const activeSchedulesData = schedulesData.filter((s) => s.status !== "Cancelled");
         setSchedules(activeSchedulesData);
 
-        // Fetch client profile data ONLY for people on today's schedule to stay within read quotas
-        const startOfToday = new Date();
-        startOfToday.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
+        // "Today" means the studio's calendar day, not the viewer's. Using the
+        // browser's midnight made the roster shift for anyone in another zone.
+        const startOfToday = startOfStudioDay();
+        const endOfToday = endOfStudioDay();
 
         const todaySchedules = activeSchedulesData.filter((s) => {
           if (!s.startTime) return false;

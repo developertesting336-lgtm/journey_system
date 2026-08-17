@@ -1,6 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { parseSessionDate } from "../src/lib/utils";
 
+const OCR_MODEL = "gemini-3-flash-preview";
+
 export interface ValidationLog {
   id: string;
   name: string;
@@ -26,9 +28,13 @@ export interface ValidationSession {
   hasConflict?: boolean;
 }
 
-export function sanitizeImportedSessions(sessions: ValidationSession[]): ValidationSession[] {
+export function sanitizeImportedSessions(
+  sessions: ValidationSession[],
+): ValidationSession[] {
   // Sort by sessionNumber chronologically initially
-  const sorted = [...sessions].sort((a, b) => a.sessionNumber - b.sessionNumber);
+  const sorted = [...sessions].sort(
+    (a, b) => a.sessionNumber - b.sessionNumber,
+  );
 
   let lastValidDateTS = new Date().getTime();
 
@@ -36,8 +42,12 @@ export function sanitizeImportedSessions(sessions: ValidationSession[]): Validat
     const sess = sorted[i];
 
     // Check if missing or invalid date for Rule 2 / 3
-    let isInvalidDate = !sess.date || sess.date.toLowerCase() === 'confirm' || sess.date === '0' || sess.isInferredDate;
-    
+    let isInvalidDate =
+      !sess.date ||
+      sess.date.toLowerCase() === "confirm" ||
+      sess.date === "0" ||
+      sess.isInferredDate;
+
     let currentTS = 0;
     if (!isInvalidDate) {
       currentTS = parseSessionDate(sess.date);
@@ -55,10 +65,10 @@ export function sanitizeImportedSessions(sessions: ValidationSession[]): Validat
         // First session and mostly blank
         sess.isInferredDate = true;
       }
-      
+
       const d = new Date(lastValidDateTS);
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
       const yyyy = d.getFullYear();
       sess.date = `${yyyy}-${mm}-${dd}`;
     } else {
@@ -66,8 +76,8 @@ export function sanitizeImportedSessions(sessions: ValidationSession[]): Validat
       lastValidDateTS = currentTS;
       sess.isInferredDate = false;
       const d = new Date(lastValidDateTS);
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
       const yyyy = d.getFullYear();
       sess.date = `${yyyy}-${mm}-${dd}`;
     }
@@ -82,10 +92,15 @@ export function sanitizeImportedSessions(sessions: ValidationSession[]): Validat
       const existing = dateMap[sess.date];
       let conflict = false;
 
-      sess.machines.forEach(incomingMachine => {
-        const existingMachine = existing.machines.find(m => m.machineId === incomingMachine.machineId);
+      sess.machines.forEach((incomingMachine) => {
+        const existingMachine = existing.machines.find(
+          (m) => m.machineId === incomingMachine.machineId,
+        );
         if (existingMachine) {
-          if (existingMachine.weight !== incomingMachine.weight || existingMachine.reps !== incomingMachine.reps) {
+          if (
+            existingMachine.weight !== incomingMachine.weight ||
+            existingMachine.reps !== incomingMachine.reps
+          ) {
             conflict = true;
           }
         } else {
@@ -103,7 +118,9 @@ export function sanitizeImportedSessions(sessions: ValidationSession[]): Validat
   }
 
   // Re-number sessions after merge
-  mergedSessions.sort((a, b) => parseSessionDate(a.date) - parseSessionDate(b.date));
+  mergedSessions.sort(
+    (a, b) => parseSessionDate(a.date) - parseSessionDate(b.date),
+  );
   mergedSessions.forEach((sess, idx) => {
     sess.sessionNumber = idx + 1;
   });
@@ -168,7 +185,12 @@ export const AI_SCHEMA = {
 
 let genaiClient: GoogleGenAI | null = null;
 
-const withRetry = async <T>(operationName: string, fn: () => Promise<T>, retries = 3, initialDelay = 1000): Promise<T> => {
+const withRetry = async <T>(
+  operationName: string,
+  fn: () => Promise<T>,
+  retries = 3,
+  initialDelay = 1000,
+): Promise<T> => {
   let attempt = 0;
   while (attempt < retries) {
     try {
@@ -176,12 +198,20 @@ const withRetry = async <T>(operationName: string, fn: () => Promise<T>, retries
     } catch (e: any) {
       attempt++;
       const msg = e.message || String(e);
-      const isRetryable = e.status === 503 || e.status === 429 || msg.includes('503') || msg.includes('429');
+      const isRetryable =
+        e.status === 503 ||
+        e.status === 429 ||
+        msg.includes("503") ||
+        msg.includes("429");
       if (attempt >= retries || !isRetryable) {
         throw new Error(`Gemini API Error during ${operationName}: ${msg}`);
       }
-      console.log(`[Gemini API] Retry ${attempt}/${retries} for ${operationName} after ${initialDelay * attempt}ms due to: ${msg}`);
-      await new Promise(resolve => setTimeout(resolve, initialDelay * attempt));
+      console.log(
+        `[Gemini API] Retry ${attempt}/${retries} for ${operationName} after ${initialDelay * attempt}ms due to: ${msg}`,
+      );
+      await new Promise((resolve) =>
+        setTimeout(resolve, initialDelay * attempt),
+      );
     }
   }
   throw new Error("unreachable");
@@ -342,15 +372,17 @@ ${referenceText}
 TASK:
 Analyze the MSF Reference Text. Generate a step-by-step setup guide for the trainer to get the client safely into the ${machineName}. Ensure any specific limitations mentioned in the Client Details and Clinical Profile are addressed using rules found in the Reference Text. Specifically check against the Machine Known Contraindications. Return ONLY the requested JSON object.`;
 
-  const response = await withRetry("generateMachineSetupGuide", () => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      systemInstruction: AI_SETUP_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: AI_SCHEMA,
-    },
-  }));
+  const response = await withRetry("generateMachineSetupGuide", () =>
+    ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        systemInstruction: AI_SETUP_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: AI_SCHEMA,
+      },
+    }),
+  );
 
   if (!response.text) {
     throw new Error("No text returned from Gemini");
@@ -389,15 +421,17 @@ ${referenceText}
 TASK:
 Analyze the provided MSF Reference Text for the ${machineName}. Generate a structured coaching guide that a trainer can read while the client is actively performing the exercise. Focus strictly on the execution of the movement, the pacing, turnaround rules, and specific verbal cues. Return ONLY the requested JSON object.`;
 
-  const response = await withRetry("generateExecutionGuide", () => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      systemInstruction: AI_EXECUTION_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: AI_EXECUTION_SCHEMA,
-    },
-  }));
+  const response = await withRetry("generateExecutionGuide", () =>
+    ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        systemInstruction: AI_EXECUTION_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: AI_EXECUTION_SCHEMA,
+      },
+    }),
+  );
 
   if (!response.text) {
     throw new Error("No text returned from Gemini");
@@ -443,15 +477,17 @@ ${referenceText}
 TASK:
 Analyze the MSF Reference Text, the specific Client Details, and explicitly cross-reference the Client Clinical Profile against the Machine Known Contraindications. Generate a clinical strategy and progression guide for the trainer. If the client's condition requires a Static Hold (SH) or Timed Static Contraction (TSC), detail the exact setup. If the exercise is completely contraindicated, provide the approved substitutions. Return ONLY the requested JSON object.`;
 
-  const response = await withRetry("generateClinicalStrategy", () => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      systemInstruction: AI_CLINICAL_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: AI_CLINICAL_SCHEMA,
-    },
-  }));
+  const response = await withRetry("generateClinicalStrategy", () =>
+    ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        systemInstruction: AI_CLINICAL_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: AI_CLINICAL_SCHEMA,
+      },
+    }),
+  );
 
   if (!response.text) {
     throw new Error("No text returned from Gemini");
@@ -620,24 +656,26 @@ ${JSON.stringify(machineDictionary, null, 2)}
     inlineData: { data: img.base64, mimeType: img.mimeType },
   }));
 
-  const response = await withRetry("extractMachineSettingsFromImage", () => ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [
-      {
-        parts: [
-          ...imageParts,
-          {
-            text: `Analyze the charts and extract all machine settings found in the second column across all ${images.length} images.`,
-          },
-        ],
+  const response = await withRetry("extractMachineSettingsFromImage", () =>
+    ai.models.generateContent({
+      model: OCR_MODEL,
+      contents: [
+        {
+          parts: [
+            ...imageParts,
+            {
+              text: `Analyze the charts and extract all machine settings found in the second column across all ${images.length} images.`,
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: MACHINE_SETTINGS_OCR_SCHEMA,
       },
-    ],
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: MACHINE_SETTINGS_OCR_SCHEMA,
-    },
-  }));
+    }),
+  );
 
   if (!response.text) {
     throw new Error("No data returned from settings extraction.");
@@ -656,11 +694,11 @@ export async function processLegacyChart(
   images: { base64: string; mimeType: string }[],
   expectedSessions: number,
   pageIndex?: number,
-  totalPages?: number
+  totalPages?: number,
 ): Promise<OCRResult> {
   const ai = getGenaiClient();
 
-  const systemInstruction = `You are a high-precision clinical data extraction AI. You are extracting data from Page ${pageIndex !== undefined ? pageIndex + 1 : 'N'} of ${totalPages ? totalPages : images.length} training chart images.
+  const systemInstruction = `You are a high-precision clinical data extraction AI. You are extracting data from Page ${pageIndex !== undefined ? pageIndex + 1 : "N"} of ${totalPages ? totalPages : images.length} training chart images.
 
 **CRITICAL: FULL HORIZONTAL SCAN (12 COLUMNS)**
 - Every MSF Legacy Chart page contains a grid with exactly 12 vertical columns for sessions.
@@ -694,24 +732,26 @@ Return ONLY valid JSON matching the requested schema.`;
     inlineData: { data: img.base64, mimeType: img.mimeType },
   }));
 
-  const response = await withRetry("processLegacyChart", () => ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [
-      {
-        parts: [
-          ...imageParts,
-          {
-            text: `Analyze all ${images.length} training chart images and extract data session-by-session into a consolidated structure. Total expected columns to find: up to 12 per page.`,
-          },
-        ],
+  const response = await withRetry("processLegacyChart", () =>
+    ai.models.generateContent({
+      model: OCR_MODEL,
+      contents: [
+        {
+          parts: [
+            ...imageParts,
+            {
+              text: `Analyze all ${images.length} training chart images and extract data session-by-session into a consolidated structure. Total expected columns to find: up to 12 per page.`,
+            },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: CHART_OCR_SCHEMA,
       },
-    ],
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: CHART_OCR_SCHEMA,
-    },
-  }));
+    }),
+  );
 
   if (!response.text) {
     throw new Error("No data returned from OCR engine.");

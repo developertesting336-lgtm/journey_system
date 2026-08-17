@@ -754,6 +754,8 @@ export interface Studio {
   timezone: string;
   /** MindBody Site ID for external API synchronization */
   mindbodySiteId?: string;
+  /** MindBody Location ID for location-specific filtering when site IDs are shared */
+  mindbodyLocationId?: string | number;
   locationType?: "corporate" | "franchise";
   createdAt?: any;
   networkId?: string; // Newly added to associate with a FranchiseNetwork

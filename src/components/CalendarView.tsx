@@ -20,6 +20,13 @@ import {
 import { ScheduleEntry, Trainer } from "../types";
 import { cn } from "../lib/utils";
 import { isFuzzyNameMatch } from "../lib/sync-utils";
+import {
+  studioDateKey,
+  zonedHM,
+  studioHour,
+  calendarLabelKey,
+  studioDayBoundsForKey,
+} from "../lib/studio-time";
 import { db } from "../firebase";
 import {
   updateDoc,
@@ -74,9 +81,20 @@ export function CalendarView({
 
       const hasSessionInActiveStudio = schedules.some((s) => {
         if (s.status === "Cancelled") return false;
-        if (activeStudioId && s.studioId && s.studioId !== activeStudioId) return false;
-        if (s.trainerId && t.id && (s.trainerId === t.id || String(s.trainerId) === String(t.id))) return true;
-        if (s.trainerName && t.fullName && s.trainerName.toLowerCase() === t.fullName.toLowerCase()) return true;
+        if (activeStudioId && s.studioId && s.studioId !== activeStudioId)
+          return false;
+        if (
+          s.trainerId &&
+          t.id &&
+          (s.trainerId === t.id || String(s.trainerId) === String(t.id))
+        )
+          return true;
+        if (
+          s.trainerName &&
+          t.fullName &&
+          s.trainerName.toLowerCase() === t.fullName.toLowerCase()
+        )
+          return true;
         return false;
       });
       return hasSessionInActiveStudio;
@@ -227,7 +245,7 @@ export function CalendarView({
   const isTrainerMatch = (s: any, trainer: Trainer): boolean => {
     if (!s || !trainer) return false;
     const sId = s.trainerId || s.staffId || s.StaffId;
-    if (sId && trainer.id && (String(sId) === String(trainer.id))) return true;
+    if (sId && trainer.id && String(sId) === String(trainer.id)) return true;
 
     const sName = (s.trainerName || s.staffName || s.StaffFirstName || "")
       .trim()
@@ -252,12 +270,13 @@ export function CalendarView({
   };
 
   const getSlotHeader = (date: Date) => {
-    let h = date.getHours();
-    const m = date.getMinutes();
+    const hm = zonedHM(date);
+    let h = hm ? hm.hour : 0;
+    const m = hm ? hm.minute : 0;
     const slotM = m < 30 ? "00" : "30";
     const ampm = h >= 12 ? "PM" : "AM";
     h = h % 12;
-    h = h ? h : 12; // the hour '0' should be '12'
+    h = h ? h : 12;
     return `${h}:${slotM} ${ampm}`;
   };
 
@@ -277,21 +296,29 @@ export function CalendarView({
     setSelectedDate(next);
   };
 
-  const isToday = (date: Date) => {
-    const today = new Date();
-    return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
-    );
-  };
+  const calendarLabelKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+      date.getDate(),
+    ).padStart(2, "0")}`;
 
-  const isSameDay = (d1: Date, d2: Date) => {
-    return (
-      d1.getDate() === d2.getDate() &&
-      d1.getMonth() === d2.getMonth() &&
-      d1.getFullYear() === d2.getFullYear()
-    );
+  const isToday = (date: Date) =>
+    calendarLabelKey(date) === studioDateKey(new Date());
+
+  const isSameDay = (instant: Date, gridDate: Date) =>
+    studioDateKey(instant) === calendarLabelKey(gridDate);
+
+  const eventCoversDay = (item: any, gridDate: Date): boolean => {
+    const toKey = (v: any): string => {
+      if (!v) return "";
+      if (typeof v === "string") return v.slice(0, 10);
+      const d = safeToDate(v);
+      return d ? (studioDateKey(d) ?? "") : "";
+    };
+    const startKey = toKey(item.date);
+    if (!startKey) return false;
+    const endKey = toKey(item.endDate) || startKey;
+    const dayKey = calendarLabelKey(gridDate);
+    return dayKey >= startKey && dayKey <= endKey;
   };
 
   const amSlots = React.useMemo(() => {
@@ -306,7 +333,7 @@ export function CalendarView({
           (s as any).start,
       );
       if (d) {
-        const h = d.getHours();
+        const h = studioHour(d) ?? 0;
         if (h < 14) {
           if (h < minH) minH = h;
           if (h > maxH) maxH = h;
@@ -336,7 +363,7 @@ export function CalendarView({
           (s as any).start,
       );
       if (d) {
-        const h = d.getHours();
+        const h = studioHour(d) ?? 0;
         if (h >= 14) {
           if (h < minH) minH = h;
           if (h > maxH) maxH = h;
@@ -696,12 +723,7 @@ export function CalendarView({
               if (!item.isClientEvent || item.isUnavailabilityEvent)
                 return false;
               if (!item.date) return false;
-              let start = safeToDate(item.date);
-              start.setHours(0, 0, 0, 0);
-              let end = item.endDate ? safeToDate(item.endDate) : start;
-              end.setHours(23, 59, 59, 999);
-              const d = new Date(day.date);
-              return d >= start && d <= end;
+              return eventCoversDay(item, day.date);
             });
 
             // Sort events: High priority first
@@ -908,10 +930,11 @@ export function CalendarView({
     const weekDays = getWeekDays(selectedDate);
     const allSlots = dynamicSlots;
 
-    const weekStart = new Date(weekDays[0]);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekDays[6]);
-    weekEnd.setHours(23, 59, 59, 999);
+    // Bound the week by the studio's midnights; these filter real timestamps.
+    const weekStart = studioDayBoundsForKey(
+      calendarLabelKey(weekDays[0]),
+    ).start;
+    const weekEnd = studioDayBoundsForKey(calendarLabelKey(weekDays[6])).end;
 
     const activeSessions = filteredItems
       .filter((s) => !s.isClientEvent || s.isUnavailabilityEvent)
@@ -1001,7 +1024,7 @@ export function CalendarView({
                           active ? "text-ink-d1" : "text-ink-d3",
                         )}
                       >
-                        {date.toLocaleDateString(undefined, {
+                        {date.toLocaleDateString("en-US", {
                           weekday: "short",
                         })}
                       </p>
@@ -1031,12 +1054,7 @@ export function CalendarView({
                     if (!i.isClientEvent || i.isUnavailabilityEvent)
                       return false;
                     if (!i.date) return false;
-                    let start = safeToDate(i.date);
-                    start.setHours(0, 0, 0, 0);
-                    let end = i.endDate ? safeToDate(i.endDate) : start;
-                    end.setHours(23, 59, 59, 999);
-                    const d = new Date(date);
-                    return d >= start && d <= end;
+                    return eventCoversDay(i, date);
                   });
                   // Sort: High priority first
                   const sortedEvents = dayEvents.sort((a, b) => {
@@ -1315,9 +1333,9 @@ export function CalendarView({
     const timeToPosition = (date: Date) => {
       if (!isTodaySelected) return null;
 
-      const h = date.getHours();
-      const m = date.getMinutes();
-      const totalMins = h * 60 + m;
+      // The "now" indicator has to sit on the studio clock like everything else.
+      const hm = zonedHM(date);
+      const totalMins = hm ? hm.hour * 60 + hm.minute : 0;
 
       const shiftStartMins = shiftMode === "PM" ? 14 * 60 : 6 * 60;
       const shiftEndMins = shiftMode === "AM" ? 14 * 60 : 21 * 60;
@@ -1445,12 +1463,7 @@ export function CalendarView({
                             if (!i.isClientEvent || i.isUnavailabilityEvent)
                               return false;
                             if (!i.date) return false;
-                            let start = safeToDate(i.date);
-                            start.setHours(0, 0, 0, 0);
-                            let end = i.endDate ? safeToDate(i.endDate) : start;
-                            end.setHours(23, 59, 59, 999);
-                            const d = new Date(selectedDate);
-                            return d >= start && d <= end;
+                            return eventCoversDay(i, selectedDate);
                           });
                           const sortedEvents = dayEvents.sort((a, b) => {
                             const priorities: any = {

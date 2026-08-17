@@ -6,8 +6,10 @@ import ClientReliabilityScore from "./ClientReliabilityScore";
 import CrossTrainApprovalCard from "./CrossTrainApprovalCard";
 import CrossTrainAccessGate from "./CrossTrainAccessGate";
 import { Button } from "@/components/ui/button";
+import { useActiveStudio } from "../../ActiveStudioContext";
 
 export function MindbodyDashboard() {
+  const { activeStudio } = useActiveStudio();
   const [role, setRole] = useState<"trainer" | "leader">("trainer");
   const [showGate, setShowGate] = useState(false);
   const [accessState, setAccessState] = useState<
@@ -19,28 +21,33 @@ export function MindbodyDashboard() {
   const [isLoadingToken, setIsLoadingToken] = useState(false);
 
   const testGetUserToken = async () => {
+    // Verifies the live connection for the studio you are actually in, using the
+    // server's own source credentials. It used to hard-code the MindBody sandbox
+    // site and demo login, which proved nothing about this studio.
+    if (!activeStudio?.mindbodySiteId) {
+      setTokenStatus(
+        `${activeStudio?.name || "This studio"} has no MindBody Site ID configured.`,
+      );
+      return;
+    }
+
     setIsLoadingToken(true);
     setTokenStatus("Verifying Connection...");
     try {
-      const response = await fetch("/api/mindbody/issueUserToken", {
+      const response = await fetch("/api/mindbody/locations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          siteId: -99,
-          username: "mindbodysandboxsite@gmail.com",
-          password: "Apitest1234",
-        }),
+        body: JSON.stringify({ siteId: String(activeStudio.mindbodySiteId) }),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch token");
+        throw new Error(data.error || "Failed to reach MindBody");
       }
-      console.log("Token response:", data);
       setTokenStatus(
-        `Verified Active! AccessToken: ${data.AccessToken?.substring(0, 15)}...`,
+        `Verified Active on Site ${activeStudio.mindbodySiteId} (${(data.locations || []).length} location(s)).`,
       );
     } catch (error: any) {
-      console.error("Error fetching token:", error);
+      console.error("Error verifying MindBody connection:", error);
       setTokenStatus(`Error: ${error.message || "Check console"}`);
     } finally {
       setIsLoadingToken(false);

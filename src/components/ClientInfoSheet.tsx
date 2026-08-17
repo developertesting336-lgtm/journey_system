@@ -409,10 +409,21 @@ export const ClientInfoSheet: React.FC<ClientInfoSheetProps> = ({
                             const mbId = (formData as any).mindbodyClientId || (formData as any).mindbodyId;
                             const searchName = `${formData.firstName || ""} ${formData.lastName || ""}`.trim();
                             if (!mbId && !searchName) return;
+                            // Only ever look a client up against their own home
+                            // studio's site — falling back to another studio's
+                            // site returns a different studio's client record.
+                            const targetStudio = studios.find(
+                              (s) => s.id === client.homeStudioId,
+                            );
+                            if (!targetStudio?.mindbodySiteId) {
+                              toastError(
+                                `${targetStudio?.name || "This client's home studio"} has no MindBody Site ID configured.`,
+                              );
+                              return;
+                            }
                             setIsSyncingMb(true);
                             try {
-                              const targetStudio = studios.find(s => s.id === client.homeStudioId) || studios.find(s => s.mindbodySiteId) || studios[0];
-                              const siteId = targetStudio?.mindbodySiteId ? String(targetStudio.mindbodySiteId).trim() : "-99";
+                              const siteId = String(targetStudio.mindbodySiteId).trim();
 
                               const res = await fetch("/api/mindbody/client-demographics", {
                                 method: "POST",

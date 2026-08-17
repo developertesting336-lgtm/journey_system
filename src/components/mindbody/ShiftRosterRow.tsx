@@ -4,6 +4,7 @@ import AppointmentCard, {
   AppointmentSyncState,
 } from "./AppointmentCard";
 import { cn } from "../../lib/utils";
+import { zonedHM } from "../../lib/studio-time";
 
 export type ShiftRosterTrainer = {
   id: string;
@@ -39,9 +40,8 @@ function findNowColumn(
   timeColumns: string[],
   currentTime: Date,
 ): string | null {
-  const currentHour = currentTime.getHours();
-  const currentMinute = currentTime.getMinutes();
-  const currentTotalMins = currentHour * 60 + currentMinute;
+  const hm = zonedHM(currentTime);
+  const currentTotalMins = hm ? hm.hour * 60 + hm.minute : 0;
 
   let latestCol: string | null = null;
   let latestMins = -1;

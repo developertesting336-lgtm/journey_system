@@ -470,6 +470,142 @@ async function startServer() {
     }
   });
 
+  app.post("/api/mindbody/locations", async (req, res) => {
+    try {
+      const mindbodyApiKey = process.env.MINDBODY_API_KEY;
+      if (!mindbodyApiKey) {
+        return res
+          .status(500)
+          .json({ error: "MINDBODY_API_KEY environment variable is not set." });
+      }
+
+      const siteId = req.body?.siteId;
+      if (!siteId) {
+        return res.status(400).json({ error: "siteId is required" });
+      }
+
+      let userToken: string | undefined;
+      try {
+        userToken = await getMindbodyToken(String(siteId));
+      } catch (tokenErr: any) {
+        console.warn(
+          "Could not get Mindbody token for locations, proceeding without token:",
+          tokenErr.message,
+        );
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Api-Key": mindbodyApiKey,
+        SiteId: String(siteId),
+      };
+      if (userToken) {
+        headers["Authorization"] = userToken;
+      }
+
+      const apiResponse = await fetch(
+        "https://api.mindbodyonline.com/public/v6/site/locations",
+        {
+          method: "GET",
+          headers,
+        },
+      );
+
+      if (apiResponse.ok) {
+        const data = await apiResponse.json();
+        const locationsList = data.Locations || data.locations || [];
+        const normalized = locationsList.map((loc: any) => ({
+          id: String(loc.Id),
+          name: loc.Name || `Location ${loc.Id}`,
+          address: loc.Address || "",
+          city: loc.City || "",
+          state: loc.State || "",
+        }));
+        return res.json({ locations: normalized });
+      }
+
+      const siteLocationsStatus = apiResponse.status;
+      const siteLocationsError = await apiResponse.text().catch(() => "");
+      console.warn(
+        `Mindbody /site/locations returned status ${siteLocationsStatus} (${siteLocationsError}), falling back to appointments scan...`,
+      );
+
+      // Fallback strategy: Query recent staff appointments to extract active LocationId and Location names
+      if (userToken) {
+        try {
+          const now = new Date();
+          const start = now.toISOString().split("T")[0];
+          const end = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .split("T")[0];
+
+          const apptParams = new URLSearchParams({
+            StartDate: `${start}T00:00:00`,
+            EndDate: `${end}T23:59:59`,
+            Limit: "100",
+          });
+
+          const apptResponse = await fetch(
+            `https://api.mindbodyonline.com/public/v6/appointment/staffappointments?${apptParams.toString()}`,
+            {
+              method: "GET",
+              headers,
+            },
+          );
+
+          if (apptResponse.ok) {
+            const apptData = await apptResponse.json();
+            const appts = apptData.Appointments || apptData.appointments || [];
+            const locMap = new Map<string, string>();
+
+            appts.forEach((a: any) => {
+              if (a.LocationId !== undefined && a.LocationId !== null) {
+                const locId = String(a.LocationId);
+                const locName = a.LocationName || a.Location?.Name || `Location ${locId}`;
+                if (!locMap.has(locId)) {
+                  locMap.set(locId, locName);
+                }
+              }
+            });
+
+            if (locMap.size > 0) {
+              const fallbackLocs = Array.from(locMap.entries()).map(([id, name]) => ({
+                id,
+                name,
+              }));
+              return res.json({ locations: fallbackLocs });
+            }
+          } else {
+            const apptErrText = await apptResponse.text().catch(() => "");
+            console.warn(`Fallback staffappointments also failed with status ${apptResponse.status}: ${apptErrText}`);
+          }
+        } catch (fbErr: any) {
+          console.warn("Fallback scan error:", fbErr.message);
+        }
+      }
+
+      // Surface Mindbody's own message rather than the raw JSON envelope so the
+      // client has something short enough to show in the form.
+      let parsedMessage = siteLocationsError;
+      let mindbodyCode: string | undefined;
+      try {
+        const jsonErr = JSON.parse(siteLocationsError);
+        if (jsonErr?.Error?.Message) parsedMessage = jsonErr.Error.Message;
+        if (jsonErr?.Error?.Code) mindbodyCode = String(jsonErr.Error.Code);
+      } catch (_) {}
+
+      return res.status(siteLocationsStatus).json({
+        error: parsedMessage || "Endpoint not found/authorized",
+        code: mindbodyCode,
+      });
+    } catch (e: any) {
+      console.error("Fetch locations error:", e);
+      res
+        .status(500)
+        .json({ error: e.message || "Failed to fetch location list" });
+    }
+  });
+
   app.post("/api/mindbody/staff-appointments", async (req, res) => {
     try {
       const mindbodyApiKey = process.env.MINDBODY_API_KEY;
@@ -684,8 +820,9 @@ async function startServer() {
         return res.status(400).json({ error: "siteId is required" });
       }
 
+      // Only the caller's own site. Retrying against the sandbox (-99) used to
+      // return demo records that were then written onto real client profiles.
       const sitesToTry = [String(siteId)];
-      if (String(siteId) !== "-99") sitesToTry.push("-99");
 
       let mbClients: any[] = [];
       let lastApiError = "";

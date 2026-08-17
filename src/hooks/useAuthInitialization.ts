@@ -37,13 +37,22 @@ export function useAuthInitialization() {
 
           let trainerData: Trainer | null = null;
 
-          if (u.email) {
+          // Microsoft/Azure AD sign-in frequently leaves the top-level email
+          // null and only exposes the address on the provider entry. The trainer
+          // lookup is keyed on email, so without this fallback a valid Microsoft
+          // user is treated as having no profile and sent to Request Access.
+          const resolvedEmail =
+            u.email ||
+            u.providerData?.find((p) => p?.email)?.email ||
+            null;
+
+          if (resolvedEmail) {
             try {
               // Primary method: Lookup by email
               const trainersRef = collection(db, "trainers");
               const q = query(
                 trainersRef,
-                where("email", "==", u.email.toLowerCase()),
+                where("email", "==", resolvedEmail.toLowerCase()),
               );
               const querySnapshot = await getDocs(q);
 
@@ -71,14 +80,14 @@ export function useAuthInitialization() {
               // Bootstrap the owner if they have no profile at all
               if (
                 !trainerData &&
-                u.email.toLowerCase() === "developertesting336@gmail.com"
+                resolvedEmail.toLowerCase() === "developertesting336@gmail.com"
               ) {
                 const newTrainer: Trainer = {
                   id: u.uid,
                   fullName: "System Admin",
                   initials: "SA",
                   role: "Admin",
-                  email: u.email.toLowerCase(),
+                  email: resolvedEmail.toLowerCase(),
                   primaryHomeStudioId: "system",
                   accessibleStudioIds: ["system"],
                   activeGuestStudioIds: [],

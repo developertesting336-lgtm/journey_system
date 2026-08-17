@@ -289,6 +289,8 @@ export function IntegrationsHubView({
         trainerId,
         startDate,
         endDate,
+        activeStudio.id,
+        activeStudio.mindbodyLocationId,
       );
 
       setSyncStats(result);
@@ -423,13 +425,23 @@ export function IntegrationsHubView({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Mindbody Site ID
                     </label>
                     <Input
                       value={activeStudio?.mindbodySiteId || "Not Configured"}
+                      disabled
+                      className="bg-slate-50 dark:bg-slate-900/50 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Mindbody Location ID
+                    </label>
+                    <Input
+                      value={activeStudio?.mindbodyLocationId ? String(activeStudio.mindbodyLocationId) : "Site Default"}
                       disabled
                       className="bg-slate-50 dark:bg-slate-900/50 font-mono"
                     />

@@ -25,6 +25,13 @@ import { db } from "../firebase";
 import { Client, Trainer, View, WorkoutSession } from "../types";
 import { isFuzzyNameMatch } from "../lib/sync-utils";
 import {
+  zonedHM,
+  studioHour,
+  calendarLabelKey,
+  studioDayBoundsForKey,
+  studioDateKey,
+} from "../lib/studio-time";
+import {
   safeToDate,
   getMillis,
   isSessionValid,
@@ -102,7 +109,7 @@ export function ClientsView({
   const [isSearchingDb, setIsSearchingDb] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"morning" | "afternoon">(() => {
-    return new Date().getHours() >= 12 ? "afternoon" : "morning";
+    return (studioHour(new Date()) ?? 0) >= 12 ? "afternoon" : "morning";
   });
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [linkingSession, setLinkingSession] = useState<any | null>(null);
@@ -320,8 +327,9 @@ export function ClientsView({
   const getScheduleSlotStr = (s: any): string => {
     const date = safeToDate(s?.startTime || s?.StartDateTime || s?.date);
     if (!date) return "";
-    let h = date.getHours();
-    const m = Math.floor(date.getMinutes() / 30) * 30;
+    const hm = zonedHM(date);
+    let h = hm ? hm.hour : 0;
+    const m = Math.floor((hm ? hm.minute : 0) / 30) * 30;
     const mStr = m.toString().padStart(2, "0");
     const ampm = h >= 12 ? "PM" : "AM";
     h = h % 12;
@@ -329,11 +337,13 @@ export function ClientsView({
     return `${h}:${mStr} ${ampm}`;
   };
 
-  // Get sessions for selected day
-  const dateStart = new Date(selectedDate);
-  dateStart.setHours(0, 0, 0, 0);
-  const dateEnd = new Date(selectedDate);
-  dateEnd.setHours(23, 59, 59, 999);
+  // Sessions for the selected day, bounded by the STUDIO's midnight. Using the
+  // viewer's midnight here while reading hours in studio time selected a window
+  // offset from the studio's day, which scattered a normal 7am-8pm schedule
+  // across every hour from 12 AM to 11:30 PM.
+  const { start: dateStart, end: dateEnd } = studioDayBoundsForKey(
+    calendarLabelKey(selectedDate),
+  );
 
   const todaysSchedules = (schedules || [])
     .filter((s) => {
@@ -353,7 +363,7 @@ export function ClientsView({
     (todaysSchedules || []).forEach((s) => {
       const d = safeToDate(s.startTime || s.StartDateTime || s.date);
       if (d) {
-        const h = d.getHours();
+        const h = studioHour(d) ?? 0;
         if (h < 14) {
           if (h < minHour) minHour = h;
           if (h > maxHour) maxHour = h;
@@ -378,7 +388,7 @@ export function ClientsView({
     (todaysSchedules || []).forEach((s) => {
       const d = safeToDate(s.startTime || s.StartDateTime || s.date);
       if (d) {
-        const h = d.getHours();
+        const h = studioHour(d) ?? 0;
         if (h >= 14) {
           if (h < minHour) minHour = h;
           if (h > maxHour) maxHour = h;
@@ -401,14 +411,14 @@ export function ClientsView({
     if (s.clientName?.toLowerCase().includes("unavailab")) return false;
     const sDate = safeToDate(s.startTime || s.StartDateTime || s.date);
     if (!sDate) return false;
-    return sDate.getHours() < 14;
+    return (studioHour(sDate) ?? 0) < 14;
   }).length;
 
   const pmSessionsCount = todaysSchedules.filter((s) => {
     if (s.clientName?.toLowerCase().includes("unavailab")) return false;
     const sDate = safeToDate(s.startTime || s.StartDateTime || s.date);
     if (!sDate) return false;
-    return sDate.getHours() >= 14;
+    return (studioHour(sDate) ?? 0) >= 14;
   }).length;
 
   const preBookedCount = amSessionsCount + pmSessionsCount;
@@ -498,10 +508,11 @@ export function ClientsView({
   ];
 
   const timeToPosition = (date: Date) => {
-    if (selectedDate.toDateString() !== new Date().toDateString()) return null;
-    const h = date.getHours();
-    const m = date.getMinutes();
-    const totalMins = h * 60 + m;
+    // "Is the selected day today?" must be asked of the studio's clock, or the
+    // now-indicator disappears whenever the viewer's date differs from theirs.
+    if (calendarLabelKey(selectedDate) !== studioDateKey(new Date())) return null;
+    const hm = zonedHM(date);
+    const totalMins = hm ? hm.hour * 60 + hm.minute : 0;
     const shiftStartMins = activeTab === "morning" ? 7 * 60 : 14 * 60;
     const shiftEndMins = activeTab === "morning" ? 13 * 60 : 19 * 60;
     if (totalMins < shiftStartMins || totalMins > shiftEndMins) return null;
@@ -516,8 +527,9 @@ export function ClientsView({
     return todaysSchedules.filter((s) => {
       const date = safeToDate(s.startTime);
       if (!date) return false;
-      const h = date.getHours().toString().padStart(2, "0");
-      const m = date.getMinutes().toString().padStart(2, "0");
+      const hm = zonedHM(date);
+      const h = String(hm ? hm.hour : 0).padStart(2, "0");
+      const m = String(hm ? hm.minute : 0).padStart(2, "0");
       return `${h}:${m}` === slot;
     });
   };
@@ -1244,8 +1256,8 @@ export function ClientsView({
                             );
                             if (!sDate) return false;
                             return activeTab === "morning"
-                              ? sDate.getHours() < 14
-                              : sDate.getHours() >= 14;
+                              ? (studioHour(sDate) ?? 0) < 14
+                              : (studioHour(sDate) ?? 0) >= 14;
                           }).length;
                           return (
                             <th
@@ -1496,7 +1508,7 @@ export function ClientsView({
                                                       )}
                                                   </div>
                                                   {sDate &&
-                                                    sDate.getMinutes() % 30 !==
+                                                    (zonedHM(sDate)?.minute ?? 0) % 30 !==
                                                       0 &&
                                                     exactTimeStr && (
                                                       <div className="text-[10px] font-black text-amber-500 uppercase tracking-tight">

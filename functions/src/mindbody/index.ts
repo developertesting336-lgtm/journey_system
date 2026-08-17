@@ -9,6 +9,7 @@ import { defineSecret } from "firebase-functions/params";
 import { verifyMindbodySignature } from "./verifySignature";
 import { recordHealthEvent } from "./healthState";
 import { tryRecordEvent } from "./idempotency";
+import { wallClockToInstant, isValidTimeZone, DEFAULT_TIME_ZONE } from "./time";
 
 export type WebhookRequest = {
   rawBody: string;
@@ -25,27 +26,85 @@ export type WebhookDeps = {
   webhookSecret: string;
 };
 
-let studiosCache: Record<string, string> | null = null;
+type CachedStudio = {
+  id: string;
+  siteId: string;
+  locationId?: string;
+  /** IANA zone the studio's wall-clock times are expressed in. */
+  timeZone?: string;
+};
+
+let studiosCache: CachedStudio[] | null = null;
 let lastCacheUpdate = 0;
 
-async function getStudioIdFromMindbodySite(
-  firestore: Firestore,
-  siteId: string | number,
-): Promise<string | undefined> {
+/** Clears the module-level studio cache. Exported for tests. */
+export function resetStudioCache(): void {
+  studiosCache = null;
+  lastCacheUpdate = 0;
+}
+
+async function getStudios(firestore: Firestore): Promise<CachedStudio[]> {
   const now = Date.now();
   if (!studiosCache || now - lastCacheUpdate > 60000) {
     // Cache for 1 minute
-    studiosCache = {};
+    const next: CachedStudio[] = [];
     const snap = await firestore.collection("studios").get();
     snap.forEach((doc) => {
       const data = doc.data();
       if (data.mindbodySiteId) {
-        studiosCache![String(data.mindbodySiteId)] = doc.id;
+        next.push({
+          id: doc.id,
+          siteId: String(data.mindbodySiteId).trim(),
+          locationId:
+            data.mindbodyLocationId !== undefined &&
+            data.mindbodyLocationId !== null
+              ? String(data.mindbodyLocationId).trim()
+              : undefined,
+          timeZone: isValidTimeZone(data.timezone)
+            ? String(data.timezone).trim()
+            : undefined,
+        });
       }
     });
+    studiosCache = next;
     lastCacheUpdate = now;
   }
-  return studiosCache[String(siteId)];
+  return studiosCache;
+}
+
+export type StudioResolution = {
+  studioId?: string;
+  /** True when several studios share the site and the event names no location. */
+  ambiguous: boolean;
+  /** Timezone of the resolved studio, for reading MindBody's naive times. */
+  timeZone?: string;
+};
+
+async function resolveStudio(
+  firestore: Firestore,
+  siteId: string | number,
+  locationId?: string | number,
+): Promise<StudioResolution> {
+  const studios = await getStudios(firestore);
+  const site = String(siteId).trim();
+  const onSite = studios.filter((s) => s.siteId === site);
+
+  if (onSite.length === 0) return { ambiguous: false };
+  if (locationId !== undefined && locationId !== null && locationId !== "") {
+    const loc = String(locationId).trim();
+    const match = onSite.find((s) => s.locationId === loc);
+    return match
+      ? { studioId: match.id, ambiguous: false, timeZone: match.timeZone }
+      : { ambiguous: true };
+  }
+
+  if (onSite.length === 1)
+    return {
+      studioId: onSite[0].id,
+      ambiguous: false,
+      timeZone: onSite[0].timeZone,
+    };
+  return { ambiguous: true };
 }
 
 /**
@@ -128,6 +187,18 @@ export async function handleMindbodyWebhook(
           ? parsed.siteId
           : undefined;
 
+    // MindBody spells this differently across event types; any of them pins the
+    // event to one physical studio.
+    const rawLocationId =
+      payloadData.locationId ??
+      payloadData.LocationId ??
+      (payloadData.location as Record<string, unknown> | undefined)?.id ??
+      parsed.locationId;
+    const locationId =
+      typeof rawLocationId === "string" || typeof rawLocationId === "number"
+        ? rawLocationId
+        : undefined;
+
     const isBookingEvent =
       eventType.toLowerCase().includes("booking") ||
       eventType.toLowerCase().includes("appointment");
@@ -167,12 +238,19 @@ export async function handleMindbodyWebhook(
       }
 
       if (siteId) {
-        const studioId = await getStudioIdFromMindbodySite(
+        const { studioId, ambiguous } = await resolveStudio(
           deps.firestore,
           siteId,
+          locationId,
         );
         if (studioId) {
           updates.homeStudioId = studioId;
+        } else if (ambiguous) {
+          // Reassigning a client's home studio decides who may view their
+          // clinical record, so leave it alone rather than pick one.
+          console.warn(
+            `Mindbody webhook: site ${siteId} maps to multiple studios and the event named no resolvable location; leaving homeStudioId untouched for client ${clientId}.`,
+          );
         }
       }
 
@@ -199,29 +277,52 @@ export async function handleMindbodyWebhook(
         (typeof payloadData.status === "string" &&
           payloadData.status.toLowerCase() === "cancelled");
 
-      let startTime: Timestamp | null = null;
-      let endTime: Timestamp | null = null;
       const rawStart =
         payloadData.startDateTime || payloadData.startTime || payloadData.start;
       const rawEnd =
         payloadData.endDateTime || payloadData.endTime || payloadData.end;
-      if (rawStart) {
-        startTime = Timestamp.fromDate(new Date(String(rawStart)));
-      }
-      if (rawEnd) {
-        endTime = Timestamp.fromDate(new Date(String(rawEnd)));
-      }
 
+      // Resolved before the times are read: MindBody's wall-clock strings are
+      // meaningless without knowing which studio's clock they belong to.
       let studioId: string | null = null;
+      let studioTimeZone = DEFAULT_TIME_ZONE;
       if (siteId) {
-        const matchedStudio = await getStudioIdFromMindbodySite(
+        const resolution = await resolveStudio(
           deps.firestore,
           siteId,
+          locationId,
         );
-        if (matchedStudio) {
-          studioId = matchedStudio;
+        if (resolution.studioId) {
+          studioId = resolution.studioId;
+          if (resolution.timeZone) studioTimeZone = resolution.timeZone;
+        } else if (resolution.ambiguous) {
+          // A booking filed against the wrong studio shows on that studio's
+          // roster and desyncs the schedule importer's duplicate check, so drop
+          // it here. 200 stops MindBody retrying an event we will never accept;
+          // the scheduled importer picks the booking up once the location is
+          // mapped in Admin -> Studios.
+          console.warn(
+            `Mindbody webhook: dropping booking ${bookingId} — site ${siteId}${
+              locationId !== undefined ? ` / location ${locationId}` : ""
+            } does not resolve to a single studio.`,
+          );
+          await recordHealthEvent(deps.firestore, {
+            type: "webhook_success",
+            hydrationLatencyMs: 0,
+          });
+          return { statusCode: 200 };
         }
       }
+
+      // Now that the owning studio is known, read its wall clock.
+      const startDate = wallClockToInstant(rawStart, studioTimeZone);
+      const endDate = wallClockToInstant(rawEnd, studioTimeZone);
+      const startTime: Timestamp | null = startDate
+        ? Timestamp.fromDate(startDate)
+        : null;
+      const endTime: Timestamp | null = endDate
+        ? Timestamp.fromDate(endDate)
+        : null;
 
       let clientName = "";
       if (typeof payloadData.clientName === "string") {

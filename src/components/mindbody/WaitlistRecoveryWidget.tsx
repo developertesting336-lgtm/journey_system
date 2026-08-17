@@ -2,6 +2,7 @@ import React from 'react';
 import { Zap } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '../../lib/utils';
+import { zonedHM } from "../../lib/studio-time";
 
 export type OpenSlot = {
   id: string;
@@ -24,8 +25,9 @@ export type WaitlistRecoveryWidgetProps = {
 };
 
 function formatTimeShort(date: Date): string {
-  let hour = date.getHours();
-  const m = date.getMinutes().toString().padStart(2, '0');
+  const hm = zonedHM(date);
+  let hour = hm ? hm.hour : 0;
+  const m = String(hm ? hm.minute : 0).padStart(2, '0');
   const period = hour >= 12 ? 'PM' : 'AM';
   hour = hour % 12 || 12;
   return `${hour}:${m} ${period}`;

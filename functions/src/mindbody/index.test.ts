@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as crypto from "node:crypto";
-import { handleMindbodyWebhook, WebhookRequest, WebhookDeps } from "./index";
+import {
+  handleMindbodyWebhook,
+  resetStudioCache,
+  WebhookRequest,
+  WebhookDeps,
+} from "./index";
 import { recordHealthEvent } from "./healthState";
 import { tryRecordEvent } from "./idempotency";
 import { Firestore } from "firebase-admin/firestore";
@@ -42,9 +47,18 @@ function createValidEnvelope(overrides: Record<string, unknown> = {}) {
 describe("handleMindbodyWebhook (Inline Upsert)", () => {
   let deps: WebhookDeps;
   let mockSet: ReturnType<typeof vi.fn>;
+  // Per-test studio roster; the default is a single studio owning site 99999.
+  let studioDocs: Array<{ id: string; data: () => Record<string, unknown> }>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The studio lookup is cached at module scope for 60s, which would otherwise
+    // leak one test's roster into the next.
+    resetStudioCache();
+
+    studioDocs = [
+      { id: "studio-123", data: () => ({ mindbodySiteId: 99999 }) },
+    ];
 
     mockSet = vi.fn().mockResolvedValue(undefined);
     const mockDoc = vi.fn().mockReturnValue({
@@ -58,8 +72,7 @@ describe("handleMindbodyWebhook (Inline Upsert)", () => {
       if (path === "studios") {
         return {
           get: vi.fn().mockResolvedValue({
-            forEach: (cb: any) =>
-              cb({ id: "studio-123", data: () => ({ mindbodySiteId: 99999 }) }),
+            forEach: (cb: any) => studioDocs.forEach((d) => cb(d)),
           }),
         };
       }
@@ -306,5 +319,218 @@ describe("handleMindbodyWebhook (Inline Upsert)", () => {
       }),
       { merge: true },
     );
+  });
+
+  describe("multiple studios sharing one MindBody site", () => {
+    // Solon is listed first and Westlake last on purpose: the old site-keyed
+    // lookup collapsed to whichever studio was iterated last, so a test that
+    // expects Solon fails against that bug instead of matching it by accident.
+    const sharedSite = [
+      {
+        id: "studio-solon",
+        data: () => ({ mindbodySiteId: 99999, mindbodyLocationId: 2 }),
+      },
+      {
+        id: "studio-westlake",
+        data: () => ({ mindbodySiteId: 99999, mindbodyLocationId: 1 }),
+      },
+    ];
+
+    it("13. Booking with a location resolves to that location's studio, not the first on the site", async () => {
+      studioDocs = [...sharedSite];
+
+      const rawBody = JSON.stringify({
+        messageId: "booking-msg-013",
+        eventId: "appointmentBooking.created",
+        eventData: {
+          siteId: 99999,
+          locationId: 2,
+          clientId: "client-123",
+          id: "booking-solon",
+          clientName: "Alice Smith",
+          startDateTime: "2024-01-13T10:00:00Z",
+          endDateTime: "2024-01-13T11:00:00Z",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      const response = await handleMindbodyWebhook(deps, req);
+
+      expect(response.statusCode).toBe(200);
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({ studioId: "studio-solon" }),
+        { merge: true },
+      );
+    });
+
+    it("14. Booking on a shared site with no location is dropped rather than misfiled", async () => {
+      studioDocs = [...sharedSite];
+
+      const rawBody = JSON.stringify({
+        messageId: "booking-msg-014",
+        eventId: "appointmentBooking.created",
+        eventData: {
+          siteId: 99999,
+          clientId: "client-123",
+          id: "booking-unknown",
+          clientName: "Alice Smith",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      const response = await handleMindbodyWebhook(deps, req);
+
+      expect(response.statusCode).toBe(200);
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it("15. Booking naming a location no studio owns is dropped", async () => {
+      studioDocs = [...sharedSite];
+
+      const rawBody = JSON.stringify({
+        messageId: "booking-msg-015",
+        eventId: "appointmentBooking.created",
+        eventData: {
+          siteId: 99999,
+          locationId: 7,
+          clientId: "client-123",
+          id: "booking-orphan",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      const response = await handleMindbodyWebhook(deps, req);
+
+      expect(response.statusCode).toBe(200);
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it("16. Client event on a shared site leaves homeStudioId untouched", async () => {
+      studioDocs = [...sharedSite];
+
+      const rawBody = createValidEnvelope();
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      const response = await handleMindbodyWebhook(deps, req);
+
+      expect(response.statusCode).toBe(200);
+      // Membership fields still sync; only the studio assignment is withheld.
+      expect(mockSet).toHaveBeenCalledTimes(1);
+      const [written] = mockSet.mock.calls[0];
+      expect(written).not.toHaveProperty("homeStudioId");
+      expect(written).toMatchObject({ membershipStatus: "Active" });
+    });
+
+    it("18. Booking times are read on the studio clock, not the host's UTC", async () => {
+      // The studio declares Eastern; MindBody sends naive site-local time.
+      studioDocs = [
+        {
+          id: "studio-solon",
+          data: () => ({
+            mindbodySiteId: 99999,
+            mindbodyLocationId: 2,
+            timezone: "America/New_York",
+          }),
+        },
+      ];
+
+      const rawBody = JSON.stringify({
+        messageId: "booking-msg-018",
+        eventId: "appointmentBooking.created",
+        eventData: {
+          siteId: 99999,
+          locationId: 2,
+          clientId: "client-123",
+          id: "booking-tz",
+          clientName: "Alice Smith",
+          startDateTime: "2026-08-18T07:00:00",
+          endDateTime: "2026-08-18T07:30:00",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      await handleMindbodyWebhook(deps, req);
+
+      const [written] = mockSet.mock.calls[0];
+      // 07:00 Eastern in August is 11:00 UTC. Storing 07:00 UTC would place the
+      // booking at 3 AM on the studio's own roster.
+      expect(written.startTime.toDate().toISOString()).toBe(
+        "2026-08-18T11:00:00.000Z",
+      );
+      expect(written.endTime.toDate().toISOString()).toBe(
+        "2026-08-18T11:30:00.000Z",
+      );
+    });
+
+    it("19. Falls back to Eastern when the studio has no timezone set", async () => {
+      studioDocs = [
+        {
+          id: "studio-solon",
+          data: () => ({ mindbodySiteId: 99999, mindbodyLocationId: 2 }),
+        },
+      ];
+
+      const rawBody = JSON.stringify({
+        messageId: "booking-msg-019",
+        eventId: "appointmentBooking.created",
+        eventData: {
+          siteId: 99999,
+          locationId: 2,
+          id: "booking-no-tz",
+          clientName: "Alice Smith",
+          startDateTime: "2026-08-18T07:00:00",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      await handleMindbodyWebhook(deps, req);
+
+      const [written] = mockSet.mock.calls[0];
+      expect(written.startTime.toDate().toISOString()).toBe(
+        "2026-08-18T11:00:00.000Z",
+      );
+    });
+
+    it("17. Client event carrying a location still sets the right homeStudioId", async () => {
+      studioDocs = [...sharedSite];
+
+      const rawBody = createValidEnvelope({
+        eventData: {
+          siteId: 99999,
+          locationId: 1,
+          clientId: 12345,
+          membershipStatus: "Active",
+        },
+      });
+      const req: WebhookRequest = {
+        rawBody,
+        signatureHeader: signForTest(rawBody, mockSecret),
+      };
+
+      await handleMindbodyWebhook(deps, req);
+
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({ homeStudioId: "studio-westlake" }),
+        { merge: true },
+      );
+    });
   });
 });

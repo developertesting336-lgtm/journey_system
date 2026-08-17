@@ -49,6 +49,7 @@ import {
   OAuthProvider,
   User as FirebaseUser,
   signInWithPopup,
+  signOut,
 } from "firebase/auth";
 
 import { db, auth } from "./firebase";
@@ -571,12 +572,32 @@ export default function AppContent({
   );
 
   const handleRefreshSchedule = async () => {
+    const activeStudio = studios.find((s) => s.id === activeStudioId);
+
+    if (!activeStudio?.mindbodySiteId) {
+      toastError(
+        `${activeStudio?.name || "This studio"} has no MindBody Site ID. Set it in Admin → Studios before syncing.`,
+      );
+      return;
+    }
+
+    const sharesSite = studios.some(
+      (s) =>
+        s.id !== activeStudio.id &&
+        s.mindbodySiteId &&
+        String(s.mindbodySiteId).trim() ===
+          String(activeStudio.mindbodySiteId).trim(),
+    );
+    if (sharesSite && !activeStudio.mindbodyLocationId) {
+      toastError(
+        `${activeStudio.name} shares MindBody Site ${activeStudio.mindbodySiteId} with another studio but has no Location ID. Set it in Admin → Studios to keep schedules separate.`,
+      );
+      return;
+    }
+
     setIsRefreshingSchedule(true);
     try {
-      const activeStudio = studios.find((s) => s.id === activeStudioId);
-      const siteId = activeStudio?.mindbodySiteId
-        ? String(activeStudio.mindbodySiteId)
-        : "-99";
+      const siteId = String(activeStudio.mindbodySiteId);
 
       const { syncMindbodySchedules } = await import("./lib/mindbody-api-sync");
       const res = await syncMindbodySchedules(
@@ -588,6 +609,7 @@ export default function AppContent({
         undefined,
         undefined,
         activeStudioId,
+        activeStudio?.mindbodyLocationId,
       );
 
       if (res.errors && res.errors.length > 0) {
@@ -1098,6 +1120,9 @@ export default function AppContent({
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
+  /** Microsoft sign-in is limited to company staff. */
+  const MICROSOFT_ALLOWED_DOMAIN = "maxstrengthfitness.com";
+
   const handleLogin = async (providerName: "google" | "microsoft") => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
@@ -1108,21 +1133,55 @@ export default function AppContent({
         provider = new GoogleAuthProvider();
       } else {
         provider = new OAuthProvider("microsoft.com");
-        const tenantId =
-          (import.meta as any).env.VITE_MICROSOFT_TENANT_ID ||
-          "bbd57ae5-2a1c-4a5c-88df-faef01b58d91";
-        if (tenantId) {
-          provider.setCustomParameters({
-            prompt: "select_account",
-            tenant: tenantId,
-          });
-        } else {
-          provider.setCustomParameters({
-            prompt: "select_account",
-          });
+
+        const rawTenant = (
+          (import.meta as any).env.VITE_MICROSOFT_TENANT_ID || ""
+        ).trim();
+        const isValidTenant =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            rawTenant,
+          ) || ["common", "organizations", "consumers"].includes(rawTenant);
+
+        if (rawTenant && !isValidTenant) {
+          console.warn(
+            `Ignoring VITE_MICROSOFT_TENANT_ID="${rawTenant}" — not a tenant GUID or known alias. Falling back to /common.`,
+          );
+        }
+
+        provider.setCustomParameters({
+          prompt: "select_account",
+          ...(isValidTenant ? { tenant: rawTenant } : {}),
+        });
+        // Ask for the profile fields Firebase needs to populate user.email.
+        provider.addScope("openid");
+        provider.addScope("email");
+        provider.addScope("profile");
+        provider.addScope("User.Read");
+      }
+      const credential = await signInWithPopup(auth, provider);
+
+      // Microsoft sign-in is for company staff only. The single-tenant Azure app
+      // already blocks outsiders, but a guest invited into the tenant would
+      // otherwise slip through, so the address is checked here too.
+      if (providerName === "microsoft") {
+        const signedInEmail = (
+          credential.user.email ||
+          credential.user.providerData.find((p) => p?.email)?.email ||
+          ""
+        ).toLowerCase();
+
+        if (!signedInEmail.endsWith(`@${MICROSOFT_ALLOWED_DOMAIN}`)) {
+          await signOut(auth);
+          setLoginError(
+            `Microsoft sign-in is restricted to @${MICROSOFT_ALLOWED_DOMAIN} accounts. ${
+              signedInEmail
+                ? `"${signedInEmail}" is not permitted.`
+                : "That account has no usable email address."
+            }`,
+          );
+          return;
         }
       }
-      await signInWithPopup(auth, provider);
     } catch (error: any) {
       if (
         error.code === "auth/popup-closed-by-user" ||
@@ -1133,7 +1192,18 @@ export default function AppContent({
       console.error("Login failed:", error);
 
       const errMsg = error.message || "";
-      if (errMsg.includes("AADSTS50194")) {
+      if (
+        errMsg.includes("unauthorized_client") ||
+        errMsg.includes("not enabled for consumers")
+      ) {
+        setLoginError(
+          "Login failed: this Microsoft app does not accept personal Microsoft accounts. Set VITE_MICROSOFT_TENANT_ID=organizations in .env (or your tenant GUID if the app is single-tenant) and restart the dev server.",
+        );
+      } else if (errMsg.includes("AADSTS50011")) {
+        setLoginError(
+          "Login failed: redirect URI mismatch. In Azure App Registrations, add the callback URL shown on Firebase's Microsoft provider page to your app's Web redirect URIs.",
+        );
+      } else if (errMsg.includes("AADSTS50194")) {
         setLoginError(
           "Login failed: Your Microsoft App Registration is configured as single-tenant. Please go to Azure Portal and configure application 'dd2ae28c-1a71-4de3-bc12-5b0683032526' to be multi-tenant ('Accounts in any organizational directory and personal Microsoft accounts'), or set VITE_MICROSOFT_TENANT_ID in your environment variables to your tenant ID.",
         );
@@ -1224,11 +1294,14 @@ export default function AppContent({
               </div>
             </motion.button>
 
-            <motion.div
+            <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
+              onClick={() => handleLogin("microsoft")}
+              disabled={isLoggingIn}
               className={cn(
-                "relative overflow-hidden group w-full max-w-[320px] rounded-[40px] p-0.5 shadow-[0_15px_30px_rgba(0,0,0,0.5)] transition-opacity opacity-50 cursor-not-allowed",
+                "relative overflow-hidden group w-full max-w-[320px] rounded-[40px] p-0.5 shadow-[0_15px_30px_rgba(0,0,0,0.5)] transition-opacity",
+                isLoggingIn ? "opacity-50 cursor-not-allowed" : "opacity-100",
               )}
             >
               {/* Outer Metallic Ring */}
@@ -1237,13 +1310,8 @@ export default function AppContent({
               <div className="absolute inset-px bg-linear-to-b from-white/30 to-transparent rounded-[39px]"></div>
 
               <div className="relative bg-[#1d2736]/90 px-8 py-4 rounded-[38px] flex flex-row items-center justify-center gap-4 w-full h-full shadow-[inset_0_2px_15px_rgba(0,0,0,0.8)] backdrop-blur-md">
-                <div className="absolute inset-0 bg-black/60 rounded-[38px] flex items-center justify-center z-10">
-                  <span className="text-white font-bold text-sm tracking-wider uppercase drop-shadow-md">
-                    Coming Soon
-                  </span>
-                </div>
                 <svg
-                  className="w-6 h-6 text-slate-900 dark:text-white/40"
+                  className="w-6 h-6 text-slate-900 dark:text-white/90"
                   viewBox="0 0 24 24"
                   fill="currentColor"
                 >
@@ -1253,7 +1321,7 @@ export default function AppContent({
                   Continue with Microsoft
                 </span>
               </div>
-            </motion.div>
+            </motion.button>
           </div>
         </motion.div>
 

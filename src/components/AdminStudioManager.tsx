@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   collection,
   query,
@@ -61,7 +61,64 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn, getRoleColor, getRoleDisplayName } from "@/lib/utils";
 import { OperationType, handleFirestoreError } from "../lib/firestore-errors";
 import { useToast } from "../contexts/ToastContext";
+import { useDebounce } from "../hooks/useDebounce";
 import { StrongConfirmationModal } from "./StrongConfirmationModal";
+
+/** Pause after typing before the MindBody location lookup fires. */
+const SITE_ID_DEBOUNCE_MS = 600;
+
+/** Below this length a Site ID is still being typed and not worth a round trip. */
+const MIN_SITE_ID_LENGTH = 3;
+
+type MindbodyLocation = { id: string; name: string };
+
+/**
+ * Turns a MindBody / transport failure into one short line a studio admin can act on.
+ * Raw API envelopes are logged, never shown — they overflow the form and mean nothing
+ * to the person typing a Site ID.
+ */
+function friendlyLocationError(
+  status: number | null,
+  rawMessage: string,
+  code?: string,
+): string {
+  const msg = (rawMessage || "").toLowerCase();
+
+  if (status === null) return "Can't reach the server. Check your connection.";
+  if (msg.includes("api_key") || msg.includes("api key"))
+    return "MindBody API key isn't configured on the server.";
+  if (msg.includes("deactivated")) return "This MindBody site is deactivated.";
+  if (code === "InvalidSite" || msg.includes("invalid site"))
+    return "That Site ID isn't valid.";
+
+  switch (status) {
+    case 400:
+      return "That Site ID isn't valid.";
+    case 401:
+      return "MindBody rejected the API credentials.";
+    case 403:
+      return "This site hasn't granted location access.";
+    case 404:
+      return "No MindBody site found for that ID.";
+    case 429:
+      return "MindBody is rate limiting. Try again shortly.";
+    default:
+      return status >= 500
+        ? "MindBody is unavailable right now."
+        : "Couldn't load locations for that Site ID.";
+  }
+}
+
+/**
+ * The base SelectContent popup is width-locked to its trigger and clips overflow,
+ * which truncates long MindBody location names inside the narrow registry columns.
+ * These widen the popup to its content (capped to the viewport) and let items wrap.
+ */
+const SELECT_POPUP_CLASS =
+  "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white w-auto min-w-(--anchor-width) max-w-[min(26rem,calc(100vw-2rem))] max-h-[min(18rem,var(--available-height))]";
+
+const SELECT_ITEM_CLASS =
+  "font-semibold py-2 whitespace-normal [&>div]:whitespace-normal [&>div]:break-words";
 
 interface Props {
   authTrainer: Trainer;
@@ -199,6 +256,172 @@ export function AdminStudioManager({
   // 2. CREATE STUDIO
   const [newStudioName, setNewStudioName] = useState("");
   const [newStudioSiteId, setNewStudioSiteId] = useState("");
+  const [newStudioLocationId, setNewStudioLocationId] = useState("");
+  const [createFormLocations, setCreateFormLocations] = useState<
+    MindbodyLocation[]
+  >([]);
+  const [isFetchingCreateLocations, setIsFetchingCreateLocations] =
+    useState(false);
+  const [createLocationsStatus, setCreateLocationsStatus] = useState("");
+  const createLocationsReqRef = useRef(0);
+
+  const [editSiteId, setEditSiteId] = useState("");
+  const [editLocationId, setEditLocationId] = useState("");
+  const [editFormLocations, setEditFormLocations] = useState<
+    MindbodyLocation[]
+  >([]);
+  const [isFetchingEditLocations, setIsFetchingEditLocations] = useState(false);
+  const [editLocationsStatus, setEditLocationsStatus] = useState("");
+  const editLocationsReqRef = useRef(0);
+
+  /**
+   * Looks up the physical locations behind a MindBody Site ID.
+   * Runs off a debounced Site ID, so responses can land out of order — the
+   * sequence ref discards any reply that a newer request has already superseded.
+   * Returns null when the caller should ignore the (stale) result.
+   */
+  const fetchLocationsForSite = async (
+    siteId: string,
+    reqRef: React.MutableRefObject<number>,
+    setLoading: (b: boolean) => void,
+    setStatus: (msg: string) => void,
+  ): Promise<MindbodyLocation[] | null> => {
+    const trimmed = siteId.trim();
+    const reqId = ++reqRef.current;
+
+    if (trimmed.length < MIN_SITE_ID_LENGTH) {
+      setLoading(false);
+      setStatus("");
+      return [];
+    }
+
+    setLoading(true);
+    setStatus("Looking up locations...");
+    try {
+      const res = await fetch("/api/mindbody/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId: trimmed }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.warn("Mindbody location lookup failed:", res.status, err);
+        if (reqId !== reqRef.current) return null;
+        setStatus(friendlyLocationError(res.status, err?.error, err?.code));
+        return [];
+      }
+
+      const data = await res.json();
+      const fetchedLocs: MindbodyLocation[] = data.locations || [];
+
+      if (reqId !== reqRef.current) return null;
+      setStatus(
+        fetchedLocs.length === 0
+          ? "No locations on this site yet."
+          : `${fetchedLocs.length} location(s) found.`,
+      );
+      return fetchedLocs;
+    } catch (e: any) {
+      // Transport-level failure (offline, server down) — no HTTP status to read.
+      console.warn("Mindbody location lookup error:", e);
+      if (reqId !== reqRef.current) return null;
+      setStatus(friendlyLocationError(null, e?.message));
+      return [];
+    } finally {
+      if (reqId === reqRef.current) setLoading(false);
+    }
+  };
+
+  // Auto-lookup for the registry form as the Site ID is typed.
+  const debouncedNewStudioSiteId = useDebounce(
+    newStudioSiteId,
+    SITE_ID_DEBOUNCE_MS,
+  );
+
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      const locs = await fetchLocationsForSite(
+        debouncedNewStudioSiteId,
+        createLocationsReqRef,
+        setIsFetchingCreateLocations,
+        setCreateLocationsStatus,
+      );
+      if (ignore || locs === null) return;
+      setCreateFormLocations(locs);
+      // Drop a previously picked location once it no longer exists on this site.
+      setNewStudioLocationId((prev) =>
+        locs.some((l) => l.id === prev) ? prev : "",
+      );
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [debouncedNewStudioSiteId]);
+
+  // Seed the edit form whenever a different studio is opened.
+  useEffect(() => {
+    setEditSiteId(
+      selectedStudio?.mindbodySiteId
+        ? String(selectedStudio.mindbodySiteId)
+        : "",
+    );
+    setEditLocationId(
+      selectedStudio?.mindbodyLocationId
+        ? String(selectedStudio.mindbodyLocationId)
+        : "",
+    );
+    setEditFormLocations([]);
+    setEditLocationsStatus("");
+  }, [selectedStudioId]);
+
+  const debouncedEditSiteId = useDebounce(editSiteId, SITE_ID_DEBOUNCE_MS);
+
+  useEffect(() => {
+    if (!selectedStudioId) return;
+    let ignore = false;
+    (async () => {
+      const locs = await fetchLocationsForSite(
+        debouncedEditSiteId,
+        editLocationsReqRef,
+        setIsFetchingEditLocations,
+        setEditLocationsStatus,
+      );
+      if (ignore || locs === null) return;
+      setEditFormLocations(locs);
+      setEditLocationId((prev) =>
+        !prev || locs.length === 0 || locs.some((l) => l.id === prev)
+          ? prev
+          : "",
+      );
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, [debouncedEditSiteId, selectedStudioId]);
+
+  /**
+   * A MindBody location belongs to exactly one studio. If two studios claim the
+   * same (site, location) pair, appointments resolve ambiguously and land on
+   * whichever studio is found first.
+   */
+  const findLocationConflict = (
+    siteId: string,
+    locationId: string,
+    ignoreStudioId?: string,
+  ): Studio | undefined => {
+    if (!locationId) return undefined;
+    return allStudios.find(
+      (s) =>
+        s.id !== ignoreStudioId &&
+        s.mindbodySiteId &&
+        String(s.mindbodySiteId).trim() === siteId &&
+        s.mindbodyLocationId &&
+        String(s.mindbodyLocationId).trim() === locationId,
+    );
+  };
+
   const handleCreateStudio = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStudioName.trim() || !newStudioSiteId.trim()) {
@@ -209,6 +432,29 @@ export function AdminStudioManager({
     }
 
     const trimmedSiteId = newStudioSiteId.trim();
+    const trimmedLocationId = newStudioLocationId.trim();
+
+    const conflict = findLocationConflict(trimmedSiteId, trimmedLocationId);
+    if (conflict) {
+      toastError(
+        `"${conflict.name}" is already mapped to Location ${trimmedLocationId} on Site ${trimmedSiteId}. Pick a different location.`,
+      );
+      return;
+    }
+
+    // Without a location, a second studio on the same site pulls in every
+    // location's appointments.
+    const siblingsOnSite = allStudios.filter(
+      (s) =>
+        s.mindbodySiteId && String(s.mindbodySiteId).trim() === trimmedSiteId,
+    );
+    if (siblingsOnSite.length > 0 && !trimmedLocationId) {
+      toastError(
+        `Site ${trimmedSiteId} is already used by ${siblingsOnSite.length} studio(s). Select a Location to keep their schedules separate.`,
+      );
+      return;
+    }
+
     setIsSaving(true);
     try {
       await addDoc(collection(db, "studios"), {
@@ -217,9 +463,12 @@ export function AdminStudioManager({
         createdAt: new Date(),
         ownerId: authTrainer.id,
         mindbodySiteId: trimmedSiteId,
+        ...(trimmedLocationId ? { mindbodyLocationId: trimmedLocationId } : {}),
       });
       setNewStudioName("");
       setNewStudioSiteId("");
+      setNewStudioLocationId("");
+      setCreateFormLocations([]);
       await onRefresh?.("studios");
       toastSuccess("Studio location registered successfully.");
     } catch (err) {
@@ -365,9 +614,39 @@ export function AdminStudioManager({
     const ownerIdVal = formData.get("ownerId") as string;
     const headTrainerIdVal = formData.get("headTrainerId") as string;
     const siteIdVal = ((formData.get("mindbodySiteId") as string) || "").trim();
+    const locationIdVal = (
+      (formData.get("mindbodyLocationId") as string) || ""
+    ).trim();
 
     if (!siteIdVal) {
       toastError("Mindbody Site ID is required.");
+      setIsSaving(false);
+      return;
+    }
+
+    const conflict = findLocationConflict(
+      siteIdVal,
+      locationIdVal,
+      selectedStudio.id,
+    );
+    if (conflict) {
+      toastError(
+        `"${conflict.name}" is already mapped to Location ${locationIdVal} on Site ${siteIdVal}. Pick a different location.`,
+      );
+      setIsSaving(false);
+      return;
+    }
+
+    const siblingsOnSite = allStudios.filter(
+      (s) =>
+        s.id !== selectedStudio.id &&
+        s.mindbodySiteId &&
+        String(s.mindbodySiteId).trim() === siteIdVal,
+    );
+    if (siblingsOnSite.length > 0 && !locationIdVal) {
+      toastError(
+        `Site ${siteIdVal} is shared with ${siblingsOnSite.length} other studio(s). A Location ID is required to keep their schedules separate.`,
+      );
       setIsSaving(false);
       return;
     }
@@ -379,6 +658,7 @@ export function AdminStudioManager({
       address: formData.get("address") as string,
       timezone: formData.get("timezone") as string,
       mindbodySiteId: siteIdVal,
+      mindbodyLocationId: locationIdVal ? locationIdVal : deleteField(),
       locationType: formData.get("locationType") as any,
       brandColor: (formData.get("brandColor") as string) || "#F37427",
       ownerId: ownerIdVal === "none" ? deleteField() : ownerIdVal,
@@ -460,14 +740,14 @@ export function AdminStudioManager({
     <div className="min-h-screen text-slate-900 dark:text-slate-100 p-4 sm:p-6 md:p-8 font-sans selection:bg-[#F06C22]/35 pb-32">
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Main Header Row */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-900 pb-8">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-3xl bg-linear-to-br from-[#F06C22] to-amber-600 flex items-center justify-center text-ink-d1 shadow-2xl shadow-[#F06C22]/20">
-              <Network className="w-7 h-7" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6 border-b border-slate-900 pb-6 sm:pb-8">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-3xl bg-linear-to-br from-[#F06C22] to-amber-600 flex items-center justify-center text-ink-d1 shadow-2xl shadow-[#F06C22]/20 shrink-0">
+              <Network className="w-6 h-6 sm:w-7 sm:h-7" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-3xl md:text-4xl font-black uppercase italic tracking-tighter text-ink-d1">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl sm:text-3xl md:text-4xl font-black uppercase italic tracking-tighter text-ink-d1">
                   Studio Command
                 </h1>
                 <Badge className="bg-[#F06C22]/15 text-[#F06C22] border border-[#F06C22]/20 text-[11px] font-black uppercase tracking-widest px-2 py-0.5">
@@ -483,7 +763,7 @@ export function AdminStudioManager({
             <Button
               variant="outline"
               onClick={onBack}
-              className="border-slate-850 hover:bg-slate-900 text-zinc-300 hover:text-ink-d1 font-black uppercase tracking-widest text-[11px] h-12 rounded-2xl px-6 bg-bg-dark-2 transition-all shadow-xl"
+              className="w-full md:w-auto shrink-0 border-slate-850 hover:bg-slate-900 text-zinc-300 hover:text-ink-d1 font-black uppercase tracking-widest text-[11px] h-12 rounded-2xl px-6 bg-bg-dark-2 transition-all shadow-xl"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Overview
@@ -507,48 +787,48 @@ export function AdminStudioManager({
               Return to Executive Registries
             </button>
 
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-900">
-              <div>
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-6 pb-6 border-b border-slate-900">
+              <div className="min-w-0">
                 <div className="flex items-center gap-3">
-                  <span className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-[#F06C22]">
+                  <span className="w-10 h-10 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-[#F06C22] shrink-0">
                     <Building2 className="w-5 h-5" />
                   </span>
-                  <div>
-                    <h2 className="text-3xl font-black uppercase italic tracking-tight text-ink-d1 leading-none mb-1">
+                  <div className="min-w-0">
+                    <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tight text-ink-d1 leading-none mb-1 wrap-break-word">
                       {selectedStudio.name}
                     </h2>
-                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">
+                    <span className="block text-[10px] sm:text-[11px] font-bold text-zinc-500 uppercase tracking-widest break-all">
                       Station Security ID: {selectedStudio.id}
                     </span>
                   </div>
                 </div>
               </div>
-              <div>
+              <div className="shrink-0">
                 <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest text-[11px] font-black py-1 px-3 rounded-full">
                   Territory Active
                 </Badge>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
               {/* Studio Config and Role Assignment (Super / Franchise Owner Level) */}
-              <div className="lg:col-span-2 space-y-8">
-                <Card className="rounded-[32px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
+              <div className="lg:col-span-2 space-y-8 min-w-0">
+                <Card className="rounded-2xl sm:rounded-[32px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-32 h-32 bg-[#F06C22]/5 filter blur-3xl rounded-full" />
-                  <CardHeader className="p-8 border-b border-slate-100 dark:border-slate-800 flex flex-row items-center gap-4">
+                  <CardHeader className="p-5 sm:p-8 border-b border-slate-100 dark:border-slate-800 flex flex-row items-center gap-4">
                     <span className="w-10 h-10 bg-[#F06C22]/15 border border-[#F06C22]/20 rounded-xl flex items-center justify-center text-[#F06C22] shrink-0">
                       <BadgeInfo className="w-5 h-5" />
                     </span>
-                    <div>
-                      <CardTitle className="text-lg font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base sm:text-lg font-black uppercase tracking-wider text-slate-900 dark:text-white">
                         Studio Infrastructure Setup
                       </CardTitle>
-                      <CardDescription className="text-slate-500 dark:text-slate-400 text-[11px] uppercase font-bold tracking-widest mt-0.5">
+                      <CardDescription className="text-slate-500 dark:text-slate-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-widest mt-0.5">
                         Parameters synchronizing physical location and systems
                       </CardDescription>
                     </div>
                   </CardHeader>
-                  <CardContent className="p-8">
+                  <CardContent className="p-5 sm:p-8">
                     <form
                       onSubmit={handleUpdateStudioMetadata}
                       className="grid grid-cols-1 md:grid-cols-2 gap-6"
@@ -603,15 +883,73 @@ export function AdminStudioManager({
                           className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]"
                         />
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-2 md:col-span-2">
                         <Label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 ml-1">
                           MindBody Site ID
                         </Label>
                         <Input
                           name="mindbodySiteId"
-                          defaultValue={selectedStudio.mindbodySiteId}
-                          className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]"
+                          value={editSiteId}
+                          onChange={(e) => setEditSiteId(e.target.value)}
+                          placeholder="e.g. 12345"
+                          className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]"
                         />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 ml-1">
+                          <Label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                            MindBody Physical Location
+                          </Label>
+                          {editLocationsStatus && (
+                            <span
+                              title={editLocationsStatus}
+                              className={cn(
+                                "text-[10px] font-bold uppercase tracking-wider min-w-0 max-w-full truncate",
+                                isFetchingEditLocations
+                                  ? "text-slate-400 animate-pulse"
+                                  : editFormLocations.length > 0
+                                    ? "text-emerald-500"
+                                    : "text-rose-500",
+                              )}
+                            >
+                              {editLocationsStatus}
+                            </span>
+                          )}
+                        </div>
+                        {editFormLocations.length > 0 ? (
+                          <Select
+                            name="mindbodyLocationId"
+                            value={editLocationId}
+                            onValueChange={(val) => setEditLocationId(val)}
+                          >
+                            <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22] *:data-[slot=select-value]:truncate">
+                              <SelectValue placeholder="Select Location" />
+                            </SelectTrigger>
+                            <SelectContent
+                              alignItemWithTrigger={false}
+                              align="start"
+                              className={SELECT_POPUP_CLASS}
+                            >
+                              {editFormLocations.map((loc) => (
+                                <SelectItem
+                                  key={loc.id}
+                                  value={loc.id}
+                                  className={SELECT_ITEM_CLASS}
+                                >
+                                  {loc.name} (ID: {loc.id})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            name="mindbodyLocationId"
+                            value={editLocationId}
+                            onChange={(e) => setEditLocationId(e.target.value)}
+                            placeholder="Enter a Site ID above to load locations, or type an ID"
+                            className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]"
+                          />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 ml-1">
@@ -623,14 +961,24 @@ export function AdminStudioManager({
                             selectedStudio.locationType || "franchise"
                           }
                         >
-                          <SelectTrigger className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]">
+                          <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]">
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white">
-                            <SelectItem value="corporate" className="font-bold">
+                          <SelectContent
+                            alignItemWithTrigger={false}
+                            align="start"
+                            className={SELECT_POPUP_CLASS}
+                          >
+                            <SelectItem
+                              value="corporate"
+                              className={SELECT_ITEM_CLASS}
+                            >
                               Corporate Owned
                             </SelectItem>
-                            <SelectItem value="franchise" className="font-bold">
+                            <SelectItem
+                              value="franchise"
+                              className={SELECT_ITEM_CLASS}
+                            >
                               Franchised
                             </SelectItem>
                           </SelectContent>
@@ -666,7 +1014,7 @@ export function AdminStudioManager({
                         </div>
                       </div>
 
-                      <div className="md:col-span-2 pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                      <div className="md:col-span-2 pt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col-reverse sm:flex-row gap-3 sm:justify-between sm:items-center">
                         <Button
                           type="button"
                           variant="destructive"
@@ -674,14 +1022,14 @@ export function AdminStudioManager({
                             selectedStudio.id &&
                             handleDeleteStudio(selectedStudio.id)
                           }
-                          className="font-black uppercase tracking-widest text-[11px] h-12 px-6 rounded-2xl cursor-pointer"
+                          className="w-full sm:w-auto font-black uppercase tracking-widest text-[11px] h-12 px-6 rounded-2xl cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4 mr-2" /> Delete Studio
                         </Button>
                         <Button
                           type="submit"
                           disabled={isSaving}
-                          className="bg-[#F06C22] hover:bg-[#D95B16] text-white font-black uppercase tracking-widest text-xs h-12 px-8 rounded-2xl shadow-md cursor-pointer"
+                          className="w-full sm:w-auto bg-[#F06C22] hover:bg-[#D95B16] text-white font-black uppercase tracking-widest text-xs h-12 px-8 rounded-2xl shadow-md cursor-pointer"
                         >
                           {isSaving ? (
                             "Saving Configurations..."
@@ -1115,9 +1463,9 @@ export function AdminStudioManager({
 
                     <form
                       onSubmit={handleCreateStudio}
-                      className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 items-end"
+                      className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5 items-end"
                     >
-                      <div className="space-y-2 relative">
+                      <div className="space-y-2 min-w-0">
                         <Label className="text-[11px] font-black uppercase tracking-widest text-[#F06C22]">
                           Physical Location Name
                         </Label>
@@ -1125,29 +1473,86 @@ export function AdminStudioManager({
                           placeholder="e.g. Max Strength Chardon"
                           value={newStudioName}
                           onChange={(e) => setNewStudioName(e.target.value)}
-                          className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold placeholder:text-slate-400"
+                          className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold placeholder:text-slate-400"
                         />
                       </div>
 
-                      <div className="space-y-2 relative">
+                      <div className="space-y-2 min-w-0">
                         <Label className="text-[11px] font-black uppercase tracking-widest text-[#F06C22]">
-                          Mindbody Site ID (Required & Unique)
+                          Mindbody Site ID (Required)
                         </Label>
                         <Input
                           placeholder="e.g. 12345"
                           value={newStudioSiteId}
                           onChange={(e) => setNewStudioSiteId(e.target.value)}
-                          className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold placeholder:text-slate-400"
+                          className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold placeholder:text-slate-400"
                         />
+                      </div>
+
+                      <div className="space-y-2 min-w-0">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 min-h-5">
+                          <Label className="text-[11px] font-black uppercase tracking-widest text-[#F06C22]">
+                            Location ID / Selection
+                          </Label>
+                          {createLocationsStatus && (
+                            <span
+                              title={createLocationsStatus}
+                              className={cn(
+                                "text-[10px] font-bold uppercase tracking-wider min-w-0 max-w-full truncate",
+                                isFetchingCreateLocations
+                                  ? "text-slate-400 animate-pulse"
+                                  : createFormLocations.length > 0
+                                    ? "text-emerald-500"
+                                    : "text-rose-500",
+                              )}
+                            >
+                              {createLocationsStatus}
+                            </span>
+                          )}
+                        </div>
+                        {createFormLocations.length > 0 ? (
+                          <Select
+                            value={newStudioLocationId}
+                            onValueChange={(val) => setNewStudioLocationId(val)}
+                          >
+                            <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold *:data-[slot=select-value]:truncate">
+                              <SelectValue placeholder="Select Location" />
+                            </SelectTrigger>
+                            <SelectContent
+                              alignItemWithTrigger={false}
+                              align="start"
+                              className={SELECT_POPUP_CLASS}
+                            >
+                              {createFormLocations.map((loc) => (
+                                <SelectItem
+                                  key={loc.id}
+                                  value={loc.id}
+                                  className={SELECT_ITEM_CLASS}
+                                >
+                                  {loc.name} (ID: {loc.id})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            placeholder="Enter a Site ID to load locations"
+                            value={newStudioLocationId}
+                            onChange={(e) =>
+                              setNewStudioLocationId(e.target.value)
+                            }
+                            className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl h-11 sm:h-12 focus:border-[#F06C22] font-semibold placeholder:text-slate-400"
+                          />
+                        )}
                       </div>
 
                       <Button
                         type="submit"
                         disabled={isSaving}
-                        className="bg-[#F06C22] hover:bg-[#D95B16] text-white font-black uppercase tracking-widest text-xs h-11 sm:h-12 rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full sm:col-span-2 xl:col-span-1 bg-[#F06C22] hover:bg-[#D95B16] text-white font-black uppercase tracking-widest text-xs h-11 sm:h-12 rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <Building2 className="w-4 h-4" />
-                        Incorporate Location
+                        <Building2 className="w-4 h-4 shrink-0" />
+                        <span className="truncate">Incorporate Location</span>
                       </Button>
                     </form>
                   </Card>
@@ -1180,17 +1585,17 @@ export function AdminStudioManager({
                               <Building2 className="w-4 h-4" />
                             </span>
                             {parentNetwork ? (
-                              <span className="text-[10px] sm:text-[11px] font-black uppercase bg-[#F06C22]/15 text-[#F06C22] px-2.5 py-0.5 rounded-full border border-[#F06C22]/20">
+                              <span className="max-w-[60%] truncate text-[10px] sm:text-[11px] font-black uppercase bg-[#F06C22]/15 text-[#F06C22] px-2.5 py-0.5 rounded-full border border-[#F06C22]/20">
                                 {parentNetwork.name}
                               </span>
                             ) : (
-                              <span className="text-[10px] sm:text-[11px] font-black uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                              <span className="max-w-[60%] truncate text-[10px] sm:text-[11px] font-black uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
                                 Independent Clinic
                               </span>
                             )}
                           </div>
 
-                          <h4 className="font-extrabold uppercase italic tracking-tight text-base sm:text-lg text-slate-900 dark:text-white mb-1 leading-none group-hover:text-[#F06C22] transition-colors">
+                          <h4 className="font-extrabold uppercase italic tracking-tight text-base sm:text-lg text-slate-900 dark:text-white mb-1 leading-tight wrap-break-word group-hover:text-[#F06C22] transition-colors">
                             {studio.name}
                           </h4>
                           <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 mb-6 mt-2">
@@ -1215,9 +1620,9 @@ export function AdminStudioManager({
                   })}
 
                   {manageableStudios.length === 0 && (
-                    <div className="col-span-full py-20 text-center bg-slate-900/40 rounded-[40px] border border-dashed border-slate-850/80">
-                      <Building2 className="w-12 h-12 text-slate-850 mx-auto mb-4" />
-                      <p className="text-sm font-black uppercase tracking-widest text-zinc-400">
+                    <div className="col-span-full py-16 sm:py-20 px-4 text-center bg-slate-50 dark:bg-slate-900/40 rounded-2xl sm:rounded-[40px] border border-dashed border-slate-200 dark:border-slate-800">
+                      <Building2 className="w-10 h-10 sm:w-12 sm:h-12 text-slate-400 dark:text-slate-600 mx-auto mb-4" />
+                      <p className="text-xs sm:text-sm font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
                         No manageable studio locations found under your
                         authorization
                       </p>

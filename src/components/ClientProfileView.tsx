@@ -19,6 +19,7 @@ import {
   startAfter,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { studioHour } from "../lib/studio-time";
 import {
   User,
   Phone,
@@ -4373,9 +4374,9 @@ export function ClientProfileView({
             completedSessions.forEach((s) => {
               let hour = 12;
               if (s.startTime?.toDate) {
-                hour = s.startTime.toDate().getHours();
+                hour = studioHour(s.startTime.toDate()) ?? 12;
               } else if (s.createdAt?.toDate) {
-                hour = s.createdAt.toDate().getHours();
+                hour = studioHour(s.createdAt.toDate()) ?? 12;
               }
               if (hour < 12) timeRanges.Morning++;
               else if (hour < 17) timeRanges.Afternoon++;

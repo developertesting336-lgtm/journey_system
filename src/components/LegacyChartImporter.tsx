@@ -31,6 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { cn, parseSessionDate, parseMachineSettings } from '../lib/utils';
+import { planLegacyImport } from '../lib/legacy-import-utils';
 
 interface ImporterProps {
   clients: Client[];
@@ -347,13 +348,24 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
     setFinalizeProgress(0);
 
     try {
+      // Empty grid columns must not become sessions — see planLegacyImport.
+      const plan = planLegacyImport(validationSessions);
+      const { sessionsToImport } = plan;
+      const skippedEmptyCount = plan.skippedEmptySessionNumbers.length;
+
+      if (sessionsToImport.length === 0) {
+        toastError('No sessions contain exercise data. Nothing to import.');
+        setIsFinalizing(false);
+        return;
+      }
+
       // Calculate total operations to track progress
       // 1 for each session, 1 for each log, 1 for client update, potentially many for settings
-      const totalSessions = validationSessions.length;
-      const totalLogs = validationSessions.reduce((acc, s) => acc + s.machines.filter(m => m.machineId).length, 0);
+      const totalSessions = sessionsToImport.length;
+      const totalLogs = plan.totalLogs;
       const allMachineIds = new Set<string>();
       extractedSettings.forEach(s => allMachineIds.add(s.machineId));
-      for (const vSess of validationSessions) {
+      for (const vSess of sessionsToImport) {
         vSess.machines.forEach(m => { if (m.machineId) allMachineIds.add(m.machineId); });
       }
       const totalSettings = allMachineIds.size;
@@ -378,7 +390,7 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
       };
       
       // 1. Process Sessions & Logs
-      for (const vSess of validationSessions) {
+      for (const vSess of sessionsToImport) {
         const sessionRef = doc(collection(db, 'sessions'));
         
         let formattedDate = vSess.date;
@@ -449,14 +461,12 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
       }
 
       // 2. Update client session count and profile
-      const maxSessionNum = validationSessions.length > 0 
-        ? Math.max(...validationSessions.map(s => s.sessionNumber)) 
-        : 0;
+      const maxSessionNum = plan.highestSessionNumber;
       
       let totalImportedReps = 0;
       let totalImportedVolume = 0;
 
-      validationSessions.forEach(vSess => {
+      sessionsToImport.forEach(vSess => {
         vSess.machines.forEach(vLog => {
           if (!vLog.machineId) return;
           
@@ -490,7 +500,7 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
 
       const clientRef = doc(db, 'clients', selectedClientId);
       const clientUpdateObj: any = {
-        completedSessions: increment(validationSessions.length),
+        completedSessions: increment(sessionsToImport.length),
         sessionCount: maxSessionNum,
         updatedAt: serverTimestamp()
       };
@@ -511,7 +521,7 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
       const machineWeightEntries: Record<string, { weight: number; timestamp: number; sessionIndex: number }[]> = {};
       
       let sessionIndex = 0;
-      for (const vSess of validationSessions) {
+      for (const vSess of sessionsToImport) {
         let timestamp = Date.now();
         if (vSess.date) {
             const parsed = parseSessionDate(vSess.date);
@@ -592,7 +602,11 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
       setFinalizeProgress(100);
 
       if (onComplete) onComplete();
-      toastSuccess("Data finalized and imported successfully.");
+      toastSuccess(
+        skippedEmptyCount > 0
+          ? `Imported ${sessionsToImport.length} session(s). Skipped ${skippedEmptyCount} empty column(s) from the chart.`
+          : `Imported ${sessionsToImport.length} session(s) successfully.`,
+      );
     } catch (err: any) {
       console.error(err);
       toastError(err.message || 'Finalization failed. Check Firestore quotas.');
@@ -641,7 +655,7 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
           </Select>
           
           {validationSessions.length > 0 && (
-            <Button 
+            <Button
               onClick={finalizeImport}
               disabled={isFinalizing || validationSessions.some(s => !s.date)}
               className="bg-[#F06C22] hover:bg-[#F06C22]/90 text-white font-black px-6 h-11 tracking-widest uppercase text-xs disabled:opacity-50"

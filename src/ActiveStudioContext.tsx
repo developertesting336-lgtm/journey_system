@@ -6,6 +6,7 @@ import React, {
   ReactNode,
 } from "react";
 import { Studio, Trainer, FranchiseNetwork } from "./types";
+import { setActiveTimeZone } from "./lib/studio-time";
 import {
   hasPermission as hasPermissionHelper,
   PermissionAction,
@@ -135,6 +136,11 @@ export function ActiveStudioProvider({
   const activeStudio = React.useMemo(() => {
     return studios.find((s) => s.id === activeStudioId) || null;
   }, [activeStudioId, studios]);
+
+  // Pin all date/time rendering to the studio's own timezone rather than the
+  // viewer's, so a schedule reads the same on every device. Set during render,
+  // not in an effect, so the first paint is already correct.
+  setActiveTimeZone(activeStudio?.timezone);
 
   const setActiveStudioId = (id: string | null) => {
     setActiveStudioIdState(id);
