@@ -72,11 +72,16 @@ const MIN_SITE_ID_LENGTH = 3;
 
 type MindbodyLocation = { id: string; name: string };
 
-/**
- * Turns a MindBody / transport failure into one short line a studio admin can act on.
- * Raw API envelopes are logged, never shown — they overflow the form and mean nothing
- * to the person typing a Site ID.
- */
+const SUPPORTED_TIME_ZONES: { id: string; label: string }[] = [
+  { id: "America/New_York", label: "Eastern — New York" },
+  { id: "America/Chicago", label: "Central — Chicago" },
+  { id: "America/Denver", label: "Mountain — Denver" },
+  { id: "America/Phoenix", label: "Mountain (no DST) — Phoenix" },
+  { id: "America/Los_Angeles", label: "Pacific — Los Angeles" },
+  { id: "America/Anchorage", label: "Alaska — Anchorage" },
+  { id: "Pacific/Honolulu", label: "Hawaii — Honolulu" },
+];
+
 function friendlyLocationError(
   status: number | null,
   rawMessage: string,
@@ -265,6 +270,7 @@ export function AdminStudioManager({
   const [createLocationsStatus, setCreateLocationsStatus] = useState("");
   const createLocationsReqRef = useRef(0);
 
+  const [editTimeZone, setEditTimeZone] = useState("America/New_York");
   const [editSiteId, setEditSiteId] = useState("");
   const [editLocationId, setEditLocationId] = useState("");
   const [editFormLocations, setEditFormLocations] = useState<
@@ -372,6 +378,7 @@ export function AdminStudioManager({
         ? String(selectedStudio.mindbodyLocationId)
         : "",
     );
+    setEditTimeZone(selectedStudio?.timezone || "America/New_York");
     setEditFormLocations([]);
     setEditLocationsStatus("");
   }, [selectedStudioId]);
@@ -630,11 +637,39 @@ export function AdminStudioManager({
       selectedStudio.id,
     );
     if (conflict) {
+      const savedLocation = selectedStudio.mindbodyLocationId
+        ? String(selectedStudio.mindbodyLocationId).trim()
+        : "";
+      const locationChanged = locationIdVal !== savedLocation;
+
+      if (locationChanged) {
+        const taken = new Set(
+          allStudios
+            .filter(
+              (s) =>
+                s.mindbodySiteId &&
+                String(s.mindbodySiteId).trim() === siteIdVal &&
+                s.mindbodyLocationId,
+            )
+            .map((s) => String(s.mindbodyLocationId).trim()),
+        );
+        const free = editFormLocations
+          .filter((l) => !taken.has(l.id))
+          .map((l) => `${l.name} (${l.id})`);
+
+        toastError(
+          `"${conflict.name}" already uses Location ${locationIdVal} on Site ${siteIdVal}. ` +
+            (free.length
+              ? `Still free: ${free.join(", ")}.`
+              : `Every location on this site is taken — free one up first.`),
+        );
+        setIsSaving(false);
+        return;
+      }
+
       toastError(
-        `"${conflict.name}" is already mapped to Location ${locationIdVal} on Site ${siteIdVal}. Pick a different location.`,
+        `Saved, but note: "${conflict.name}" also uses Location ${locationIdVal}. Give one of them a different location or their schedules will mix.`,
       );
-      setIsSaving(false);
-      return;
     }
 
     const siblingsOnSite = allStudios.filter(
@@ -867,11 +902,38 @@ export function AdminStudioManager({
                         <Label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 ml-1">
                           Operating Timezone
                         </Label>
-                        <Input
+                        <Select
                           name="timezone"
-                          defaultValue={selectedStudio.timezone}
-                          className="bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]"
-                        />
+                          value={editTimeZone}
+                          onValueChange={setEditTimeZone}
+                        >
+                          <SelectTrigger className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-2xl h-12 font-bold focus:border-[#F06C22]">
+                            <SelectValue placeholder="Select Timezone" />
+                          </SelectTrigger>
+                          <SelectContent
+                            alignItemWithTrigger={false}
+                            align="start"
+                            className={SELECT_POPUP_CLASS}
+                          >
+                            {SUPPORTED_TIME_ZONES.map((tz) => (
+                              <SelectItem
+                                key={tz.id}
+                                value={tz.id}
+                                className={SELECT_ITEM_CLASS}
+                              >
+                                {tz.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {!SUPPORTED_TIME_ZONES.some(
+                          (tz) => tz.id === editTimeZone,
+                        ) && (
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-rose-500 ml-1">
+                            "{editTimeZone || "unset"}" does not handle daylight
+                            saving. Pick a region above.
+                          </p>
+                        )}
                       </div>
                       <div className="md:col-span-2 space-y-2">
                         <Label className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 ml-1">
