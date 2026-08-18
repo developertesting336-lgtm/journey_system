@@ -807,7 +807,11 @@ export function AdminStudioManager({
         </div>
 
         {/* Selected Studio Subview (Configure Staff / Metadata) */}
-        {selectedStudioId ? (
+        {/* Guard on the resolved studio, not just the id: `selectedStudio` is a
+            find() over allStudios and is undefined for a moment after a delete,
+            or before the list loads — which crashed the whole screen on
+            `selectedStudio.name`. */}
+        {selectedStudioId && selectedStudio ? (
           <motion.div
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}

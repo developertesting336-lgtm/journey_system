@@ -476,6 +476,14 @@ export default function AppContent({
   const [selectedClientDoc, setSelectedClientDoc] = useState<Client | null>(
     null,
   );
+  /** Id of the last client whose fetch finished, successfully or not. */
+  const [resolvedClientId, setResolvedClientId] = useState<string | null>(null);
+
+  // Derived rather than a flag set inside the effect: effects run *after* render,
+  // so a boolean would still read false on the first paint and flash the
+  // "not found" state before loading even began.
+  const isLoadingClient =
+    !!selectedClientId && resolvedClientId !== selectedClientId;
   const [hasQuotaError, setHasQuotaError] = useState(false);
   const [lastQuotaErrorMessage, setLastQuotaErrorMessage] = useState("");
 
@@ -497,12 +505,18 @@ export default function AppContent({
   useEffect(() => {
     if (!selectedClientId) {
       setSelectedClientDoc(null);
+      setResolvedClientId(null);
       return;
     }
+
+    let cancelled = false;
+    setSelectedClientDoc(null);
+
     const fetchClient = async () => {
       try {
         const clientRef = doc(db, "clients", selectedClientId);
         const snap = await getDoc(clientRef);
+        if (cancelled) return;
         if (snap.exists()) {
           setSelectedClientDoc({ id: snap.id, ...snap.data() } as Client);
         } else {
@@ -510,11 +524,20 @@ export default function AppContent({
         }
       } catch (e) {
         console.error("Error fetching client", e);
+      } finally {
+        // Marks the fetch as settled so the profile stops showing the spinner,
+        // whether the client was found, missing, or the read failed.
+        if (!cancelled) setResolvedClientId(selectedClientId);
       }
     };
     fetchClient().catch((err) =>
       console.error("Unhandled rejection in fetchClient:", err),
     );
+
+    // Switching clients mid-flight must not let a stale response win.
+    return () => {
+      cancelled = true;
+    };
   }, [selectedClientId]);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -1702,6 +1725,7 @@ export default function AppContent({
             {currentView === "profile" && (
               <ClientProfileView
                 clientId={selectedClientId}
+                isLoadingClient={isLoadingClient}
                 clients={clients}
                 machines={machines}
                 authTrainer={authTrainer}

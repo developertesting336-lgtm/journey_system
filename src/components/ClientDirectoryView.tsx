@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { useActiveStudio } from "../ActiveStudioContext";
 import { Client, Trainer } from "../types";
 import { db } from "../firebase";
@@ -35,6 +36,85 @@ interface Props {
     delta: number,
   ) => Promise<void>;
   onStartNewClientOnboarding?: (name: string) => void;
+}
+
+const DIRECTORY_COLUMNS = [
+  "Client",
+  "Membership",
+  "Sessions Remaining",
+  "Last Session",
+  "Next Session",
+] as const;
+
+/** Shared so the skeleton and the real table cannot drift out of alignment. */
+function DirectoryTableHead() {
+  return (
+    <thead>
+      <tr className="border-b border-border bg-muted/40">
+        {DIRECTORY_COLUMNS.map((label) => (
+          <th
+            key={label}
+            className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap"
+          >
+            {label}
+          </th>
+        ))}
+        <th className="py-4 px-6 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
+          Actions
+        </th>
+      </tr>
+    </thead>
+  );
+}
+
+/**
+ * Placeholder rows shown while the directory query is in flight.
+ *
+ * Mirrors the real row layout — avatar circle, two-line name block, one bar per
+ * remaining column — so the table does not jump when the data lands. Without it
+ * the empty "no clients found" message appeared during every load, which reads
+ * as "this studio has no clients".
+ */
+function DirectorySkeleton({ rows = 8 }: { rows?: number }) {
+  const bar = "h-3 rounded bg-muted animate-pulse";
+  return (
+    <div className="w-full overflow-x-auto" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading clients…</span>
+      <table className="w-full text-left border-collapse">
+        <DirectoryTableHead />
+        <tbody className="divide-y divide-border">
+          {Array.from({ length: rows }).map((_, i) => (
+            <tr key={i}>
+              <td className="py-4 px-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-muted border border-border shrink-0 animate-pulse" />
+                  <div className="flex flex-col gap-1.5">
+                    <div className={cn(bar, "w-32")} />
+                    <div className={cn(bar, "w-20 opacity-60")} />
+                  </div>
+                </div>
+              </td>
+              <td className="py-4 px-6">
+                <div className={cn(bar, "w-20")} />
+              </td>
+              <td className="py-4 px-6">
+                <div className={cn(bar, "w-8")} />
+              </td>
+              <td className="py-4 px-6">
+                <div className={cn(bar, "w-24")} />
+              </td>
+              <td className="py-4 px-6">
+                <div className={cn(bar, "w-24")} />
+              </td>
+              <td className="py-4 px-6">
+                <div className={cn(bar, "w-6 ml-auto")} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function ClientDirectoryView({
@@ -317,31 +397,14 @@ export function ClientDirectoryView({
       </div>
 
       <div className="max-w-7xl mx-auto w-full flex-1 overflow-y-auto custom-scrollbar pr-2 pb-24 bg-card rounded-2xl border border-border shadow-sm">
-        {displayClients.length > 0 ? (
+        {isSearchingDb && displayClients.length === 0 ? (
+          // Only when there is nothing to show yet — during a re-search the
+          // existing rows stay put rather than flashing to skeletons.
+          <DirectorySkeleton />
+        ) : displayClients.length > 0 ? (
           <div className="w-full overflow-x-auto">
             <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-border bg-muted/40">
-                  <th className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Client
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Membership
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Sessions Remaining
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Last Session
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Next Session
-                  </th>
-                  <th className="py-4 px-6 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest whitespace-nowrap">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
+              <DirectoryTableHead />
               <tbody className="divide-y divide-border">
                 {displayClients.map((client) => {
                   const isCrossTrainer =

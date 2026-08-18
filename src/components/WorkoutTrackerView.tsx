@@ -54,6 +54,7 @@ import {
   PreSessionCheckIn,
 } from "../types";
 import { handleFirestoreError, OperationType } from "../lib/firestore-errors";
+import { matchesRoutineLetter, routineLetterOf, findRoutineByLetter } from "../lib/routine-utils";
 import {
   parseSessionDate,
   safeToDate,
@@ -1712,9 +1713,13 @@ export function WorkoutTrackerView({
           sessionId: docRef.id,
           clientId,
           trainerId: authTrainer.id || "",
+          // Threw when a trainer record had neither initials nor a full name.
+          // It only runs if a pre-session note was written, which is why the
+          // crash looked intermittent.
           trainerInitials:
             authTrainer.initials ||
-            authTrainer.fullName.substring(0, 2).toUpperCase(),
+            (authTrainer.fullName || "").substring(0, 2).toUpperCase() ||
+            "??",
           date: new Date().toLocaleDateString(),
           content: `[Protocol Adjustment]: ${adjustmentNote}`,
           createdAt: serverTimestamp(),
@@ -1789,7 +1794,12 @@ export function WorkoutTrackerView({
 
         for (const mId of activeMachineIds) {
           const mac = machines.find((m) => m.id === mId);
-          const isTorsoMac = mac?.name.toLowerCase().includes("torso rotation");
+          // `mac?.name` guarded the machine but not the field: a machine
+          // document without a name threw here, after the session had already
+          // been created, leaving an In-Progress session with no logs.
+          const isTorsoMac = (mac?.name || "")
+            .toLowerCase()
+            .includes("torso rotation");
 
           let defaultWeight: number | null = null;
           if (!machineLastLogs[mId] && selectedClient && mac && mac.name) {
@@ -2283,16 +2293,13 @@ export function WorkoutTrackerView({
   const previousSession = sessions.length > 1 ? sessions[1] : null;
 
   // Suggested routine from targetRoutine state
-  const getSuggestedType = (rt: Routine | null): "A" | "B" | "Free" => {
-    if (!rt) return "A";
-    if (rt.name.includes("Routine A")) return "A";
-    if (rt.name.includes("Routine B")) return "B";
-    return "Free";
-  };
+  const getSuggestedType = (rt: Routine | null): "A" | "B" | "Free" =>
+    routineLetterOf(rt) ?? (rt ? "Free" : "A");
+
   const suggestedRoutineType = (() => {
     if (routines.length === 0) return "A";
     if (routines.length === 1)
-      return (routines[0].name.includes("B") ? "B" : "A") as RoutineType;
+      return (matchesRoutineLetter(routines[0], "B") ? "B" : "A") as RoutineType;
 
     // If we have both, alternate based on last session
     if (!lastSession || !lastSession.routineId) return "A";
@@ -2300,8 +2307,7 @@ export function WorkoutTrackerView({
     const lastR = routines.find((r) => r.id === lastSession.routineId);
     if (!lastR) return "A";
 
-    if (lastR.name.includes("Routine A")) return "B";
-    return "A";
+    return matchesRoutineLetter(lastR, "A") ? "B" : "A";
   })();
   const isRoutineBActive = selectedClient?.isRoutineBActive || false;
 

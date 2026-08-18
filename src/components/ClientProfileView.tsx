@@ -238,6 +238,7 @@ const JOURNAL_CATEGORY_DEFINITIONS: Record<
 
 export function ClientProfileView({
   clientId,
+  isLoadingClient = false,
   clients,
   machines,
   authTrainer,
@@ -252,6 +253,8 @@ export function ClientProfileView({
   activeStudioId,
 }: {
   clientId: string | null;
+  /** True while the selected client document is still being fetched. */
+  isLoadingClient?: boolean;
   clients: Client[];
   machines: Machine[];
   authTrainer?: Trainer | null;
@@ -2478,7 +2481,35 @@ export function ClientProfileView({
     return volumeByDate;
   }, [memoizedCompletedSessionsAsc, allLogs]);
 
-  if (!client)
+  if (!client) {
+    // Three different situations used to collapse into one "select a client"
+    // message, so opening a profile flashed an empty state while the document
+    // was still being fetched.
+    if (isLoadingClient)
+      return (
+        <div className="flex flex-col items-center justify-center p-20 gap-4">
+          <div
+            role="status"
+            aria-label="Loading client profile"
+            className="w-10 h-10 border-4 border-cyan border-t-transparent rounded-full animate-spin"
+          />
+          <p className="text-muted-foreground font-medium">
+            Loading client profile...
+          </p>
+        </div>
+      );
+
+    if (clientId)
+      return (
+        <div className="flex flex-col items-center justify-center p-20 gap-4">
+          <AlertCircle className="w-12 h-12 text-rose-500 opacity-40" />
+          <p className="text-muted-foreground font-medium">
+            This client could not be found. They may have been deleted.
+          </p>
+          <Button onClick={() => setView("clients")}>Back to Clients</Button>
+        </div>
+      );
+
     return (
       <div className="flex flex-col items-center justify-center p-20 gap-4">
         <AlertCircle className="w-12 h-12 text-muted-foreground opacity-20" />
@@ -2488,6 +2519,7 @@ export function ClientProfileView({
         <Button onClick={() => setView("clients")}>Back to Clients</Button>
       </div>
     );
+  }
 
   if (routineBuilderTarget) {
     return (

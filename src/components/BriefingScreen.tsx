@@ -17,6 +17,7 @@ import { ConditionChip } from "./ConditionChip";
 import { RoutineCompareCard } from "./RoutineCompareCard";
 import { SequenceRow } from "./SequenceRow";
 import { cn } from "@/lib/utils";
+import { findRoutineByLetter, matchesRoutineLetter } from "../lib/routine-utils";
 import { AppHeader } from "./AppHeader";
 import { StickyCTA } from "./StickyCTA";
 import {
@@ -174,8 +175,29 @@ export function BriefingScreen({
   );
   const [bodyStates, setBodyStates] = useState<BodyStateTag[]>([]);
 
-  const routineA = routines.find((r) => r.name.includes("Routine A"));
-  const routineB = routines.find((r) => r.name.includes("Routine B"));
+  const routineA = findRoutineByLetter(routines, "A");
+  const routineB = findRoutineByLetter(routines, "B");
+
+  /** Set once the trainer picks a routine by hand, so a background refetch of
+   *  `routines` cannot silently reset their choice back to the suggestion. */
+  const [routinePickedByTrainer, setRoutinePickedByTrainer] = useState(false);
+
+  /** Which routine the alternation logic proposed, shown as a hint on the toggle. */
+  const suggestedType: "A" | "B" = matchesRoutineLetter(targetRoutine, "B")
+    ? "B"
+    : "A";
+
+  const handlePickRoutine = (type: "A" | "B") => {
+    setRoutinePickedByTrainer(true);
+    setIsAdjusting(false);
+    if (type === "A") {
+      setSelectedRoutineType(routineA ? "A" : "Create_A");
+      setAdjustedMachineIds(routineA?.machineIds || []);
+    } else {
+      setSelectedRoutineType(routineB ? "B" : "Create_B");
+      setAdjustedMachineIds(routineB?.machineIds || []);
+    }
+  };
 
   useEffect(() => {
     if (isIntroSession) {
@@ -194,8 +216,8 @@ export function BriefingScreen({
 
     let type: "A" | "B" | "Free" | "Create_A" | "Create_B" = "Create_A";
     if (targetRoutine) {
-      if (targetRoutine.name.includes("Routine A")) type = "A";
-      else if (targetRoutine.name.includes("Routine B")) type = "B";
+      if (matchesRoutineLetter(targetRoutine, "A")) type = "A";
+      else if (matchesRoutineLetter(targetRoutine, "B")) type = "B";
     } else if (routineA) {
       type = "A";
     }
@@ -204,18 +226,21 @@ export function BriefingScreen({
       type = "Create_B";
     }
 
+    // A hand-picked routine wins over the suggestion.
+    if (routinePickedByTrainer) return;
+
     if (selectedRoutineType !== "Create_A") {
       setSelectedRoutineType(type);
       if ((type as string) === "Create_B" || (type as string) === "Free")
         setAdjustedMachineIds([]);
       else
         setAdjustedMachineIds(
-          targetRoutine?.name.includes("Routine B")
+          matchesRoutineLetter(targetRoutine, "B")
             ? routineB?.machineIds || []
             : routineA?.machineIds || [],
         );
     }
-  }, [targetRoutine, routineA, routineB]);
+  }, [targetRoutine, routineA, routineB, routinePickedByTrainer]);
 
   const getCurrentBaseSequence = () => {
     if (
@@ -320,7 +345,10 @@ export function BriefingScreen({
       })
     : "Never";
 
-  const scheduledRoutineName = targetRoutine?.name.includes("Routine B")
+  // Follows the trainer's selection, not the original suggestion — otherwise the
+  // card keeps naming the auto-picked routine after they switch.
+  const isBSelected = ["B", "Create_B"].includes(selectedRoutineType);
+  const scheduledRoutineName = isBSelected
     ? routineB?.name || "Routine B"
     : routineA?.name || "Routine A";
 
@@ -551,6 +579,57 @@ export function BriefingScreen({
                     className="w-full min-h-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 text-sm p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan transition-all resize-y"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* 3a. Routine selector — the alternation logic proposes one, the
+                    trainer can override it before starting. */}
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 px-1">
+                <span className="text-[11px] uppercase tracking-widest text-slate-600 dark:text-slate-300 font-extrabold">
+                  Today's Routine
+                </span>
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                  {routinePickedByTrainer
+                    ? "Manually selected"
+                    : `Suggested: Routine ${suggestedType}`}
+                </span>
+              </div>
+              <div
+                role="group"
+                aria-label="Select today's routine"
+                className="grid grid-cols-2 gap-2"
+              >
+                {(["A", "B"] as const).map((type) => {
+                  const routine = type === "A" ? routineA : routineB;
+                  const active =
+                    type === "A"
+                      ? ["A", "Create_A"].includes(selectedRoutineType)
+                      : ["B", "Create_B"].includes(selectedRoutineType);
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handlePickRoutine(type)}
+                      aria-pressed={active}
+                      className={cn(
+                        "min-h-14 rounded-xl border px-4 py-2 text-left transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan",
+                        active
+                          ? "bg-cyan/10 border-cyan text-slate-900 dark:text-white shadow-[0_0_16px_rgba(6,182,212,0.25)]"
+                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700",
+                      )}
+                    >
+                      <span className="block font-display italic uppercase tracking-wide text-sm">
+                        Routine {type}
+                      </span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wider mt-0.5 text-slate-400">
+                        {routine
+                          ? `${routine.machineIds?.length || 0} machines`
+                          : "Not set up — tap to build"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
