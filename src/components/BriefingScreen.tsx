@@ -133,7 +133,7 @@ export interface BriefingScreenProps {
   machines: Machine[];
   routines: Routine[];
   trainerFocuses: TrainerFocus[];
-  focusRecords?: FocusRecord[]; // Added optional FocusRecords
+  focusRecords?: FocusRecord[];
   sessionNotes: SessionNote[];
   logs?: ExerciseLog[];
   isIntroSession?: boolean;
@@ -214,12 +214,10 @@ export function BriefingScreen({
       }
     }
 
-    let type: "A" | "B" | "Free" | "Create_A" | "Create_B" = "Create_A";
+    let type: "A" | "B" | "Free" | "Create_A" | "Create_B" = routineA ? "A" : "Create_A";
     if (targetRoutine) {
-      if (matchesRoutineLetter(targetRoutine, "A")) type = "A";
-      else if (matchesRoutineLetter(targetRoutine, "B")) type = "B";
-    } else if (routineA) {
-      type = "A";
+      if (matchesRoutineLetter(targetRoutine, "A")) type = routineA ? "A" : "Create_A";
+      else if (matchesRoutineLetter(targetRoutine, "B")) type = routineB ? "B" : "Create_B";
     }
 
     if (type === "B" && !routineB) {
@@ -229,18 +227,15 @@ export function BriefingScreen({
     // A hand-picked routine wins over the suggestion.
     if (routinePickedByTrainer) return;
 
-    if (selectedRoutineType !== "Create_A") {
-      setSelectedRoutineType(type);
-      if ((type as string) === "Create_B" || (type as string) === "Free")
-        setAdjustedMachineIds([]);
-      else
-        setAdjustedMachineIds(
-          matchesRoutineLetter(targetRoutine, "B")
-            ? routineB?.machineIds || []
-            : routineA?.machineIds || [],
-        );
+    setSelectedRoutineType(type);
+    if (type === "B") {
+      setAdjustedMachineIds(routineB?.machineIds || []);
+    } else if (type === "A") {
+      setAdjustedMachineIds(routineA?.machineIds || []);
+    } else {
+      setAdjustedMachineIds([]);
     }
-  }, [targetRoutine, routineA, routineB, routinePickedByTrainer]);
+  }, [targetRoutine, routineA, routineB, routinePickedByTrainer, isIntroSession, routines]);
 
   const getCurrentBaseSequence = () => {
     if (
@@ -554,17 +549,6 @@ export function BriefingScreen({
                       );
                     })}
                   </div>
-                </div>
-
-                {/* Body State — per-region tags */}
-                <div className="space-y-2 mb-4">
-                  <label className="text-[11px] uppercase tracking-widest text-slate-600 dark:text-slate-300 font-extrabold ml-1 block">
-                    Body State
-                  </label>
-                  <BodyStateTracker
-                    value={bodyStates}
-                    onChange={setBodyStates}
-                  />
                 </div>
 
                 {/* Pre-Session Notes (UNCHANGED from existing implementation) */}
