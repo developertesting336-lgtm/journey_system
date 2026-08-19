@@ -361,7 +361,7 @@ export function BriefingScreen({
 
   return (
     <div className="w-full h-full min-h-screen bg-slate-50 dark:bg-bg-dark font-sans flex flex-col overflow-hidden text-slate-900 dark:text-white">
-      <div className="max-w-205 mx-auto w-full h-full relative flex flex-col pb-28 shadow-2xl">
+      <div className="max-w-3xl lg:max-w-4xl mx-auto w-full h-full relative flex flex-col pb-28 shadow-2xl">
         <AppHeader
           variant="dark"
           trainerInitials={authTrainer?.initials || "AJ"}
@@ -371,7 +371,7 @@ export function BriefingScreen({
         />
 
         <div className="flex-1 overflow-y-auto no-scrollbar relative z-10 flex flex-col">
-          <div className="px-4 sm:px-5 py-5 flex-1 flex flex-col gap-4 pb-60">
+          <div className="px-3.5 sm:px-5 lg:px-6 py-4 sm:py-5 flex-1 flex flex-col gap-3.5 sm:gap-4 pb-60">
             {/* 2. Client hero card */}
             <div className="rounded-2xl p-4 border border-cyan/30 shadow-sm relative overflow-hidden bg-white dark:bg-slate-900 dark:border-slate-800">
               <div className="flex justify-between items-start relative z-10">
@@ -690,27 +690,53 @@ export function BriefingScreen({
                             getMillis(b.createdAt) - getMillis(a.createdAt),
                         );
                       const lastLog = mLogs[0];
+                      const clientMetric = client?.currentMachineMetrics?.[machineId];
 
                       const isTSC =
                         machine.targetRepRange?.toLowerCase().includes("tsc") ||
                         machine.targetRepRange
                           ?.toLowerCase()
                           .includes("static") ||
-                        machine.targetRepRange?.toLowerCase().includes("time");
+                        machine.targetRepRange?.toLowerCase().includes("time") ||
+                        Boolean(lastLog?.isTSC) ||
+                        Boolean(clientMetric?.isTSC);
+
+                      const rawWeight =
+                        lastLog?.weight !== undefined && lastLog?.weight !== ""
+                          ? lastLog.weight
+                          : lastLog?.loadLb !== undefined && lastLog?.loadLb !== ""
+                            ? lastLog.loadLb
+                            : clientMetric?.weight !== undefined && clientMetric?.weight !== ""
+                              ? clientMetric.weight
+                              : null;
+
+                      const rawReps = isTSC
+                        ? lastLog?.seconds !== undefined && lastLog?.seconds !== ""
+                          ? lastLog.seconds
+                          : lastLog?.outcomeTut !== undefined && lastLog?.outcomeTut !== ""
+                            ? lastLog.outcomeTut
+                            : lastLog?.timeSpent !== undefined && lastLog?.timeSpent !== ""
+                              ? lastLog.timeSpent
+                              : clientMetric?.seconds !== undefined && clientMetric?.seconds !== ""
+                                ? clientMetric.seconds
+                                : lastLog?.reps !== undefined && lastLog?.reps !== ""
+                                  ? lastLog.reps
+                                  : clientMetric?.reps !== undefined && clientMetric?.reps !== ""
+                                    ? clientMetric.reps
+                                    : null
+                        : lastLog?.reps !== undefined && lastLog?.reps !== ""
+                          ? lastLog.reps
+                          : lastLog?.outcomeReps !== undefined && lastLog?.outcomeReps !== ""
+                            ? lastLog.outcomeReps
+                            : clientMetric?.reps !== undefined && clientMetric?.reps !== ""
+                              ? clientMetric.reps
+                              : null;
 
                       const displayMachine = {
                         idx: idx + 1,
                         name: machine.name,
-                        lastLb:
-                          lastLog?.loadLb !== undefined
-                            ? lastLog?.loadLb
-                            : null,
-                        lastReps:
-                          isTSC && lastLog?.outcomeTut
-                            ? lastLog.outcomeTut
-                            : lastLog?.outcomeReps !== undefined
-                              ? lastLog.outcomeReps
-                              : null,
+                        lastLb: rawWeight,
+                        lastReps: rawReps,
                         lastUnit: isTSC ? "sec" : "reps",
                         isTSC: isTSC,
                       };

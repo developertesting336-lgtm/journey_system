@@ -668,7 +668,7 @@ export function AdminStudioManager({
       }
 
       toastError(
-        `Saved, but note: "${conflict.name}" also uses Location ${locationIdVal}. Give one of them a different location or their schedules will mix.`,
+        `Saved, but note: "${conflict?.name || "Another studio"}" also uses Location ${locationIdVal}. Give one of them a different location or their schedules will mix.`,
       );
     }
 

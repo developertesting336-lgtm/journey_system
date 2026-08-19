@@ -512,6 +512,101 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
         clientUpdateObj.lifetimeWeight = increment(roundedImportedVolume);
       }
 
+      // Build currentMachineMetrics from imported data so profile cards and live sessions auto-populate weights
+      const targetClient = clients.find(c => c.id === selectedClientId);
+      const currentMachineMetrics: Record<string, any> = {
+        ...(targetClient?.currentMachineMetrics || {})
+      };
+
+      const cleanSettingVal = (val: any): string | null => {
+        if (!val) return null;
+        const str = String(val).trim();
+        const noise = ['PROJECT', 'CONFIRM', 'UNKNOWN', 'LEGACY', 'CHART', 'GENERAL', 'NONE', 'NULL', 'UNDEFINED'];
+        if (noise.includes(str.toUpperCase())) return null;
+        if (/^[a-zA-Z\s]{4,}$/.test(str)) return null; // Reject full descriptive words
+        return str;
+      };
+
+      const sanitizeSettingsMap = (raw: Record<string, any>): Record<string, string> => {
+        const cleaned: Record<string, string> = {};
+        Object.entries(raw || {}).forEach(([k, v]) => {
+          const validVal = cleanSettingVal(v);
+          if (validVal && k && !['project', 'notes', 'general', 'unknown'].includes(k.toLowerCase())) {
+            cleaned[k] = validVal;
+          }
+        });
+        return cleaned;
+      };
+
+      const sortedSess = [...sessionsToImport].sort((a, b) => (a.sessionNumber || 0) - (b.sessionNumber || 0));
+      for (const vSess of sortedSess) {
+        let sessDate: any = serverTimestamp();
+        if (vSess.date) {
+          const parsed = parseSessionDate(vSess.date);
+          if (parsed > 0) sessDate = new Date(parsed);
+        }
+
+        for (const vLog of vSess.machines) {
+          if (!vLog.machineId) continue;
+          if (!vLog.weight && !vLog.reps && !vLog.timeUnderLoad) continue;
+
+          const extracted = extractedSettings.find(s => s.machineId === vLog.machineId);
+          const rawSettingsObj: Record<string, string> = (extracted && extracted.rawSettings && Object.keys(extracted.rawSettings).length > 0)
+            ? { ...extracted.rawSettings }
+            : (vLog.settings ? parseMachineSettings(vLog.settings) : (currentMachineMetrics[vLog.machineId]?.settings || {}));
+
+          if (extracted) {
+            if (extracted.seat) rawSettingsObj['Seat'] = extracted.seat;
+            if (extracted.gap) rawSettingsObj['Gap'] = extracted.gap;
+            if (extracted.backPad) rawSettingsObj['Back Pad'] = extracted.backPad;
+            if (extracted.handles) rawSettingsObj['Handles'] = extracted.handles;
+            if (extracted.armPad) rawSettingsObj['Arm Pad'] = extracted.armPad;
+          }
+
+          const finalSettings = sanitizeSettingsMap(rawSettingsObj);
+
+          currentMachineMetrics[vLog.machineId] = {
+            weight: String(vLog.weight || '0'),
+            reps: vLog.isStaticHold ? '' : String(vLog.reps || ''),
+            seconds: vLog.isStaticHold ? String(vLog.timeUnderLoad || '') : '',
+            isStaticHold: Boolean(vLog.isStaticHold),
+            isTSC: Boolean(vLog.isStaticHold),
+            settings: finalSettings,
+            lastPerformedDate: sessDate,
+            lastPerformedSessionNumber: vSess.sessionNumber
+          };
+        }
+      }
+
+      // Also ensure machines from extracted settings with currentWeight get recorded
+      for (const extracted of extractedSettings) {
+        if (!extracted.machineId) continue;
+        if (!currentMachineMetrics[extracted.machineId]) {
+          const finalSettings: Record<string, string> = { ...(extracted.rawSettings || {}) };
+          if (extracted.seat) finalSettings['Seat'] = extracted.seat;
+          if (extracted.gap) finalSettings['Gap'] = extracted.gap;
+          if (extracted.backPad) finalSettings['Back Pad'] = extracted.backPad;
+          if (extracted.handles) finalSettings['Handles'] = extracted.handles;
+          if (extracted.armPad) finalSettings['Arm Pad'] = extracted.armPad;
+
+          if (extracted.currentWeight || Object.keys(finalSettings).length > 0) {
+            currentMachineMetrics[extracted.machineId] = {
+              weight: String(extracted.currentWeight || '0'),
+              reps: '',
+              seconds: '',
+              isStaticHold: false,
+              isTSC: false,
+              settings: finalSettings,
+              lastPerformedDate: serverTimestamp()
+            };
+          }
+        }
+      }
+
+      if (Object.keys(currentMachineMetrics).length > 0) {
+        clientUpdateObj.currentMachineMetrics = currentMachineMetrics;
+      }
+
       currentBatch.update(clientRef, clientUpdateObj);
       opCount++;
       updateProgress();
@@ -569,8 +664,9 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
             notes: 'Extracted from legacy chart'
           };
 
-          if (Object.keys(finalSettings).length > 0) {
-            updateData.settings = finalSettings;
+          const cleanedSettings = sanitizeSettingsMap(finalSettings);
+          if (Object.keys(cleanedSettings).length > 0) {
+            updateData.settings = cleanedSettings;
           }
 
           const entries = machineWeightEntries[mId] || [];

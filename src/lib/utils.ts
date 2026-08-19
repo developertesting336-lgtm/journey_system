@@ -166,9 +166,13 @@ export function parseMachineSettings(settingsStr: string): Record<string, string
     });
   }
 
-  // If still empty but we have a string, use 'General'
+  // If still empty but we have a valid short string (not noise words like 'Project' or 'Confirm')
   if (Object.keys(settings).length === 0 && settingsStr.trim()) {
-    settings['General'] = settingsStr.trim();
+    const raw = settingsStr.trim();
+    const noiseWords = ['PROJECT', 'CONFIRM', 'UNKNOWN', 'LEGACY', 'CHART', 'GENERAL', 'NONE', 'NULL', 'UNDEFINED'];
+    if (!noiseWords.includes(raw.toUpperCase()) && raw.length <= 8 && !/^[a-zA-Z\s]{4,}$/.test(raw)) {
+      settings['General'] = raw;
+    }
   }
 
   return settings;
@@ -239,7 +243,52 @@ export function orderMachineSettings(
   standardSettings?: Record<string, string> | null,
   options?: string[] | null
 ): [string, string, string][] {
-  const mergedSettings = { ...(settings || {}) };
+  const mergedSettings: Record<string, string> = {};
+
+  // 0. Pre-clean and normalize keys (handle legacy "PROJECT-GAP: 6" or "RAWSETTINGS" artifacts)
+  Object.entries(settings || {}).forEach(([rawK, rawV]) => {
+    if (!rawK || rawV === undefined || rawV === null) return;
+    
+    let cleanK = rawK.trim();
+    // Remove "PROJECT-", "PROJECT_", "PROJECT " prefixes
+    cleanK = cleanK.replace(/^PROJECT[-_\s]+/i, '');
+
+    // Handle stringified JSON in rawSettings or value
+    if (cleanK.toLowerCase().includes('rawsettings') || (typeof rawV === 'string' && rawV.trim().startsWith('{'))) {
+      try {
+        const parsed = typeof rawV === 'string' && rawV.trim().startsWith('{') ? JSON.parse(rawV) : (typeof rawV === 'object' ? rawV : null);
+        if (parsed && typeof parsed === 'object') {
+          Object.entries(parsed).forEach(([innerK, innerV]) => {
+            if (innerK && innerV !== undefined && innerV !== null) {
+              const safeInnerK = innerK.replace(/^PROJECT[-_\s]+/i, '');
+              mergedSettings[safeInnerK] = String(innerV);
+            }
+          });
+          return;
+        }
+      } catch {
+        // if JSON parse fails, continue
+      }
+      if (cleanK.toLowerCase().includes('rawsettings')) return; // skip rawsettings key if unparseable
+    }
+
+    // Map common names to clean labels
+    const lowerK = cleanK.toLowerCase();
+    if (lowerK === 'seat' || lowerK === 's') cleanK = 'Seat';
+    else if (lowerK === 'gap' || lowerK === 'g') cleanK = 'Gap';
+    else if (lowerK === 'backpad' || lowerK === 'back pad' || lowerK === 'b' || lowerK === 'back') cleanK = 'Back Pad';
+    else if (lowerK === 'chestpad' || lowerK === 'chest pad' || lowerK === 'chest') cleanK = 'Chest Pad';
+    else if (lowerK === 'handles' || lowerK === 'handle' || lowerK === 'h') cleanK = 'Handles';
+    else if (lowerK === 'armpad' || lowerK === 'arm pad' || lowerK === 'a') cleanK = 'Arm Pad';
+    else cleanK = cleanK.charAt(0).toUpperCase() + cleanK.slice(1);
+
+    // Skip garbage noise words as values
+    const strV = String(rawV).trim();
+    const noiseWords = ['PROJECT', 'CONFIRM', 'UNKNOWN', 'LEGACY', 'CHART', 'NULL', 'UNDEFINED'];
+    if (!noiseWords.includes(strV.toUpperCase()) && !strV.startsWith('{')) {
+      mergedSettings[cleanK] = strV;
+    }
+  });
   
   // 1. If options are provided, normalize "Back/Chest Pad" key mismatches dynamically
   if (options && options.length > 0) {
@@ -263,7 +312,7 @@ export function orderMachineSettings(
     }
   }
 
-  // 2. Ensure "Gap" is ALWAYS present (unless explicitly not wanted, but should always show gap)
+  // 2. Ensure "Gap" is ALWAYS present
   const existingGapKey = Object.keys(mergedSettings).find(k => k.toLowerCase() === 'gap');
   let gapValue: string | undefined = undefined;
   
@@ -275,21 +324,15 @@ export function orderMachineSettings(
   }
   
   if (gapValue === undefined) {
-    // Look up in standardSettings (studio-standard)
     const stdGapKey = standardSettings ? Object.keys(standardSettings).find(k => k.toLowerCase() === 'gap') : undefined;
     if (stdGapKey && standardSettings && standardSettings[stdGapKey] !== undefined && standardSettings[stdGapKey] !== null && standardSettings[stdGapKey] !== '') {
       gapValue = String(standardSettings[stdGapKey]);
     } else {
-      gapValue = "0"; // Default fallback to 0 as very common or if gap is not inputted
+      gapValue = "0";
     }
   }
   
-  if (existingGapKey) {
-    mergedSettings[existingGapKey] = gapValue;
-  } else {
-    // Explicitly add "Gap" if not present
-    mergedSettings["Gap"] = gapValue;
-  }
+  mergedSettings["Gap"] = gapValue;
 
   const entries = Object.entries(mergedSettings);
   
@@ -305,9 +348,12 @@ export function orderMachineSettings(
     return keyA.localeCompare(keyB);
   });
   
-  // 4. Convert keys to just the first letter (upper-cased) for visual shorthand, and also return the original key to preserve context if needed!
+  // 4. Convert keys to just the first letter (upper-cased) for visual shorthand
   return sorted.map(([key, val]) => {
-    const shortKey = key.trim().substring(0, 1).toUpperCase();
+    let shortKey = key.trim().substring(0, 1).toUpperCase();
+    if (key.toLowerCase().includes('arm')) shortKey = 'A';
+    if (key.toLowerCase().includes('back')) shortKey = 'B';
+    if (key.toLowerCase().includes('chest')) shortKey = 'C';
     return [shortKey, val, key];
   }) as [string, string, string][];
 }

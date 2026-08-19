@@ -54,7 +54,11 @@ import {
   PreSessionCheckIn,
 } from "../types";
 import { handleFirestoreError, OperationType } from "../lib/firestore-errors";
-import { matchesRoutineLetter, routineLetterOf, findRoutineByLetter } from "../lib/routine-utils";
+import {
+  matchesRoutineLetter,
+  routineLetterOf,
+  findRoutineByLetter,
+} from "../lib/routine-utils";
 import {
   parseSessionDate,
   safeToDate,
@@ -1387,15 +1391,11 @@ export function WorkoutTrackerView({
       const sessionsQuery = query(
         collection(db, "sessions"),
         where("clientId", "==", clientId),
-        orderBy("createdAt", "desc"),
-        limit(5),
       );
 
       const notesQuery = query(
         collection(db, "sessionNotes"),
         where("clientId", "==", clientId),
-        orderBy("createdAt", "desc"),
-        limit(5),
       );
 
       const focusQuery = query(
@@ -1406,9 +1406,25 @@ export function WorkoutTrackerView({
       const unsubscribeSessions = onSnapshot(
         sessionsQuery,
         async (snapshot) => {
-          const sessionsData = snapshot.docs.map(
-            (doc) => ({ id: doc.id, ...doc.data() }) as WorkoutSession,
-          );
+          const sessionsData = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }) as WorkoutSession)
+            .sort((a, b) => {
+              const timeA = a.createdAt?.toDate
+                ? a.createdAt.toDate().getTime()
+                : a.startTime
+                  ? new Date(a.startTime).getTime()
+                  : a.date
+                    ? new Date(a.date).getTime()
+                    : 0;
+              const timeB = b.createdAt?.toDate
+                ? b.createdAt.toDate().getTime()
+                : b.startTime
+                  ? new Date(b.startTime).getTime()
+                  : b.date
+                    ? new Date(b.date).getTime()
+                    : 0;
+              return timeB - timeA;
+            });
           setSessions(sessionsData);
 
           // Auto-select In-Progress session if it exists
@@ -1420,8 +1436,18 @@ export function WorkoutTrackerView({
             setShowRoutinePicker(false);
             setIsPreSessionMode(false);
           } else {
-            setCurrentSession(null);
-            setIsPreSessionMode(true);
+            // Guard against wiping a session that was just started locally
+            setCurrentSession((prev) => {
+              if (
+                prev &&
+                prev.status === "In-Progress" &&
+                (!prev.clientId || prev.clientId === clientId)
+              ) {
+                return prev;
+              }
+              setIsPreSessionMode(true);
+              return null;
+            });
           }
         },
         (error) => {
@@ -1466,9 +1492,16 @@ export function WorkoutTrackerView({
   }, [clientId, user?.uid, clients]);
 
   useEffect(() => {
-    if (sessions.length > 0) {
-      const sessionIds = sessions.map((s) => s.id!).filter(Boolean);
-      if (sessionIds.length === 0) return;
+    const allSessionIds = new Set<string>();
+    sessions.forEach((s) => {
+      if (s.id) allSessionIds.add(s.id);
+    });
+    if (currentSession?.id) {
+      allSessionIds.add(currentSession.id);
+    }
+
+    const sessionIds = Array.from(allSessionIds).filter(Boolean).slice(0, 30);
+    if (sessionIds.length > 0) {
       const logsQuery = query(
         collection(db, "exerciseLogs"),
         where("sessionId", "in", sessionIds),
@@ -1494,7 +1527,7 @@ export function WorkoutTrackerView({
     sessions
       .map((s) => s.id)
       .sort()
-      .join(","),
+      .join(",") + `_${currentSession?.id || ""}`,
   ]);
 
   // Routine Alternation Logic & Historical Lifts Fetching
@@ -1662,7 +1695,27 @@ export function WorkoutTrackerView({
         currentStudioId !== null &&
         clientHomeStudioId !== currentStudioId;
 
-      const sessionData: any = {
+      const cleanFirestorePayload = (obj: any): any => {
+        if (obj === null || obj === undefined) return null;
+        if (Array.isArray(obj)) return obj.map(cleanFirestorePayload);
+        if (typeof obj !== "object") return obj;
+        if (
+          typeof obj.toDate === "function" ||
+          obj.constructor?.name === "FieldValue" ||
+          obj instanceof Date
+        )
+          return obj;
+
+        const cleaned: Record<string, any> = {};
+        Object.entries(obj).forEach(([k, v]) => {
+          if (v !== undefined) {
+            cleaned[k] = cleanFirestorePayload(v);
+          }
+        });
+        return cleaned;
+      };
+
+      const sessionData: any = cleanFirestorePayload({
         clientId,
         mindbodyClientId:
           selectedClient?.mindbodyClientId ||
@@ -1671,27 +1724,24 @@ export function WorkoutTrackerView({
         clientName: selectedClient
           ? `${selectedClient.firstName} ${selectedClient.lastName}`.trim()
           : "",
-        homeStudioId: clientHomeStudioId, // Explicit homeStudioId security stamp
+        homeStudioId: clientHomeStudioId || "",
         routineId: routineId || null,
-        hostedAtStudioId: currentStudioId,
-        clientHomeStudioId: clientHomeStudioId,
-        sessionType,
+        hostedAtStudioId: currentStudioId || "",
+        clientHomeStudioId: clientHomeStudioId || "",
+        sessionType: sessionType || "Standard",
         sessionNumber: nextNum,
         date,
-        isCrossTrain,
-        trainerInitials,
-        trainerName,
-        trainerId,
-        startedByTrainerId: trainerId,
+        isCrossTrain: Boolean(isCrossTrain),
+        trainerInitials: trainerInitials || "??",
+        trainerName: trainerName || "",
+        trainerId: trainerId || "",
+        startedByTrainerId: trainerId || "",
         lastHeartbeatAt: serverTimestamp(),
         status: "In-Progress",
         startTime: serverTimestamp(),
         createdAt: serverTimestamp(),
-      };
-
-      if (preSessionCheckIn) {
-        sessionData.preSessionCheckIn = preSessionCheckIn;
-      }
+        ...(preSessionCheckIn ? { preSessionCheckIn } : {}),
+      });
 
       const docRef = await addDoc(collection(db, "sessions"), sessionData);
 
@@ -1748,6 +1798,25 @@ export function WorkoutTrackerView({
         );
       }
 
+      // Also fallback to clientMachineSettings if machine is not yet in currentMachineMetrics
+      if (clientMachineSettings) {
+        Object.entries(clientMachineSettings).forEach(
+          ([mId, settingObjVal]) => {
+            const settingObj = settingObjVal as any;
+            if (!machineLastLogs[mId] && settingObj) {
+              const w = settingObj.currentWeight ?? settingObj.startingWeight;
+              if (w !== undefined && w !== null && String(w).trim() !== "") {
+                machineLastLogs[mId] = {
+                  weight: String(w),
+                  machineId: mId,
+                  repQuality: 2,
+                };
+              }
+            }
+          },
+        );
+      }
+
       // 3. Auto-populate logs for routine machines
       let activeMachineIds = customMachines;
       if (!activeMachineIds) {
@@ -1769,9 +1838,9 @@ export function WorkoutTrackerView({
           const payload: any = {
             sessionId: docRef.id,
             clientId,
-            homeStudioId: clientHomeStudioId, // Explicit homeStudioId security stamp
-            clientHomeStudioId: clientHomeStudioId,
-            studioId: currentStudioId || clientHomeStudioId,
+            homeStudioId: clientHomeStudioId || "",
+            clientHomeStudioId: clientHomeStudioId || "",
+            studioId: currentStudioId || clientHomeStudioId || "",
             machineId: mId,
             machineSettings:
               currentSettings[mId]?.settings || prevLog?.machineSettings || {},
@@ -1779,17 +1848,18 @@ export function WorkoutTrackerView({
           };
           if (side) payload.side = side;
           if (prevLog) {
-            if (prevLog.weight) payload.weight = prevLog.weight;
+            if (prevLog.weight) payload.weight = String(prevLog.weight);
 
             // Intentionally not auto-filling reps, seconds, or repQuality per user request
 
             if (prevLog.isStaticHold !== undefined)
-              payload.isStaticHold = prevLog.isStaticHold;
-            if (prevLog.isTSC !== undefined) payload.isTSC = prevLog.isTSC;
+              payload.isStaticHold = Boolean(prevLog.isStaticHold);
+            if (prevLog.isTSC !== undefined)
+              payload.isTSC = Boolean(prevLog.isTSC);
           } else if (defaultWeight) {
             payload.weight = String(defaultWeight);
           }
-          return payload;
+          return cleanFirestorePayload(payload);
         };
 
         for (const mId of activeMachineIds) {
@@ -1867,6 +1937,10 @@ export function WorkoutTrackerView({
 
       lastMachineLoggedAt.current = Date.now();
       setCurrentSession(newSession as WorkoutSession);
+      setSessions((prev) => [
+        newSession as WorkoutSession,
+        ...prev.filter((s) => s.id !== newSession.id),
+      ]);
       setShowRoutinePicker(false);
       setIsPreSessionMode(false);
     } catch (error) {
@@ -2249,7 +2323,9 @@ export function WorkoutTrackerView({
         focusRecords={focusRecords}
         sessionNotes={sessionNotes}
         logs={
-          Object.values(logs).filter((l: any) => l.clientId === clientId) as any
+          Object.values(logs).filter(
+            (l: any) => !l.clientId || l.clientId === clientId,
+          ) as any
         }
         isIntroSession={isIntroSession}
         rightControls={rightControls}
@@ -2299,7 +2375,9 @@ export function WorkoutTrackerView({
   const suggestedRoutineType = (() => {
     if (routines.length === 0) return "A";
     if (routines.length === 1)
-      return (matchesRoutineLetter(routines[0], "B") ? "B" : "A") as RoutineType;
+      return (
+        matchesRoutineLetter(routines[0], "B") ? "B" : "A"
+      ) as RoutineType;
 
     // If we have both, alternate based on last session
     if (!lastSession || !lastSession.routineId) return "A";
@@ -2328,7 +2406,7 @@ export function WorkoutTrackerView({
       animate={{ opacity: 1 }}
       className={cn(
         "h-[calc(100vh-80px)] flex flex-col gap-1 overflow-hidden relative",
-        hasActiveHeader ? "pt-40 md:pt-28" : "",
+        hasActiveHeader ? "pt-30 sm:pt-32 lg:pt-24" : "",
       )}
     >
       {isIntroSession && (
@@ -2342,22 +2420,22 @@ export function WorkoutTrackerView({
       )}
       {/* Persistent Active Header - Refactored as Sticky Fixed */}
       {(selectedClient || currentSession) && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-white/95 dark:bg-bg-dark/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 md:py-4 flex flex-col md:flex-row md:items-center justify-between h-37 md:h-25 shadow-md transition-all gap-3 md:gap-0">
-          {/* Row 1 on mobile, left block on desktop */}
-          <div className="flex items-center justify-between w-full md:w-auto gap-3">
-            <div className="flex items-center gap-3">
+        <div className="fixed top-0 left-0 right-0 z-50 bg-white/95 dark:bg-bg-dark/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 sm:px-4 lg:px-6 py-2 sm:py-2.5 lg:py-3 flex flex-col lg:flex-row lg:items-center justify-between min-h-25 lg:h-19 shadow-md transition-all gap-2 lg:gap-0">
+          {/* Row 1 on mobile & tablet, left block on desktop */}
+          <div className="flex items-center justify-between w-full lg:w-auto gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {/* Left: Client & Trainer Identity */}
-              <div className="flex flex-col min-w-0 max-w-37.5 sm:max-w-xs">
-                <h3 className="text-base sm:text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
+              <div className="flex flex-col min-w-0 max-w-32.5 sm:max-w-xs">
+                <h3 className="text-sm sm:text-base md:text-lg lg:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
                   {selectedClient
                     ? `${selectedClient.firstName} ${selectedClient.lastName}`
                     : currentSession?.isUnassigned
                       ? "Unassigned Tracking"
                       : "Initializing..."}
                 </h3>
-                <div className="flex items-center gap-1.5 mt-0.5 text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400">
-                  <div className="w-5 h-5 rounded-full bg-white dark:bg-bg-dark flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm shrink-0">
-                    <span className="text-[11px] font-bold">
+                <div className="flex items-center gap-1.5 mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  <div className="w-4.5 h-4.5 sm:w-5 sm:h-5 rounded-full bg-white dark:bg-bg-dark flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm shrink-0">
+                    <span className="text-[10px] sm:text-[11px] font-bold">
                       {authTrainer?.initials ||
                         currentSession?.trainerInitials ||
                         "??"}
@@ -2372,15 +2450,15 @@ export function WorkoutTrackerView({
                 variant="outline"
                 size="sm"
                 onClick={() => setIsShowingSessionNotes(true)}
-                className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-8.5 px-3 rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ml-1.5 md:ml-3"
+                className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-7 sm:h-8 px-2 sm:px-2.5 rounded-lg text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
               >
-                <MessageSquare className="w-3.5 h-3.5 text-cta shrink-0 fill-current" />
+                <MessageSquare className="w-3 h-3 text-cta shrink-0 fill-current" />
                 Notes
               </Button>
             </div>
 
-            {/* Mobile Timer: display timer next to client name on mobile */}
-            <div className="flex md:hidden items-center shrink-0">
+            {/* Mobile & Tablet Timer: display timer next to client name on screens < lg */}
+            <div className="flex lg:hidden items-center shrink-0">
               {currentSession && currentSession.startTime && (
                 <ActiveSessionTimer
                   startTime={currentSession.startTime}
@@ -2392,8 +2470,8 @@ export function WorkoutTrackerView({
             </div>
           </div>
 
-          {/* Desktop Center: Focal Clock with Play/Pause button inside */}
-          <div className="hidden md:flex flex-col items-center absolute left-1/2 -translate-x-1/2 z-50">
+          {/* Desktop Center: Focal Clock only on large screens (lg:) with space */}
+          <div className="hidden lg:flex flex-col items-center absolute left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
             {currentSession && currentSession.startTime && (
               <ActiveSessionTimer
                 startTime={currentSession.startTime}
@@ -2403,46 +2481,47 @@ export function WorkoutTrackerView({
             )}
           </div>
 
-          {/* Row 2 on mobile, right block on desktop */}
-          <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto shrink-0 z-50">
+          {/* Row 2 on mobile & tablet, right block on desktop */}
+          <div className="flex items-center justify-between lg:justify-end gap-1.5 sm:gap-2 w-full lg:w-auto shrink-0 z-50">
             <Button
               variant="outline"
               className={cn(
-                "border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-9 md:h-10 px-3 text-xs md:text-sm transition-colors flex-1 md:flex-initial",
+                "border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm transition-colors flex-1 lg:flex-initial",
                 !showAllMachines
                   ? "bg-cta text-white hover:opacity-90 dark:text-white border-transparent"
                   : "",
               )}
               onClick={() => setShowAllMachines(!showAllMachines)}
             >
-              <LayoutList className="w-4 h-4 mr-1.5" />
-              Focus
+              <LayoutList className="w-3.5 h-3.5 sm:mr-1" />
+              <span>Focus</span>
             </Button>
 
             <Button
               variant="outline"
-              className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-9 md:h-10 px-3 text-xs md:text-sm transition-colors flex-1 md:flex-initial"
+              className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm transition-colors flex-1 lg:flex-initial"
               onClick={() => setIsSessionRoutineManagerOpen(true)}
             >
-              <Settings2 className="w-4 h-4 mr-1.5" />
-              Routine
+              <Settings2 className="w-3.5 h-3.5 sm:mr-1" />
+              <span>Routine</span>
             </Button>
 
             <Button
               variant="outline"
-              className="border-red-500/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 h-9 md:h-10 px-3 text-xs md:text-sm font-bold uppercase tracking-wider transition-colors flex-1 md:flex-initial"
+              className="border-red-500/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm font-bold uppercase tracking-wider transition-colors flex-1 lg:flex-initial"
               onClick={() => setShowCancelConfirmation(true)}
               title="Discard active session without saving"
             >
-              <Trash2 className="w-4 h-4 mr-1.5" />
-              Discard
+              <Trash2 className="w-3.5 h-3.5 sm:mr-1" />
+              <span>Discard</span>
             </Button>
 
             <Button
-              className="bg-cta hover:opacity-90 text-white font-semibold shadow-sm transition-all h-9 md:h-10 px-4 md:px-6 rounded-lg text-xs md:text-sm flex-1 md:flex-initial cursor-pointer"
+              className="bg-cta hover:opacity-90 text-white font-semibold shadow-sm transition-all h-8 sm:h-9 lg:h-10 px-2.5 sm:px-4 lg:px-6 rounded-lg text-[11px] sm:text-xs lg:text-sm flex-1 lg:flex-initial cursor-pointer whitespace-nowrap"
               onClick={handleEndSessionPress}
             >
-              Finish Session
+              <span>Finish</span>
+              <span className="hidden sm:inline">&nbsp;Session</span>
             </Button>
           </div>
         </div>

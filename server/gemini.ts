@@ -646,9 +646,11 @@ ${JSON.stringify(machineDictionary, null, 2)}
 - **Handles/Arm Pads (Width):** Look for "H", "W", "M", "N" indicating Wide, Middle, or Narrow setups (e.g., "H: M" -> handles: "M").
 
 **STRICT RULES:**
+- Setting values MUST be numeric (e.g. "4", "2.5", "12"), pin/protocol codes (e.g. "P2", "P3"), or width codes (e.g. "W", "M", "N", "Wide", "Narrow").
+- NEVER return English words like "project", "client", "exercise", "routine", "general", or notes as machine settings.
 - Ignore weight and rep data. ONLY focus on the static machine settings.
 - If a machine is listed multiple times, return it only once with its most recent/complete settings.
-- If a field is not found, omit it from the object.
+- If a field is not found or is ambiguous/illegible, omit it from the object.
 - CRITICAL: Process EVERY image in the array. Each image may have different settings.
 - Return ONLY valid JSON matching the requested schema.`;
 
