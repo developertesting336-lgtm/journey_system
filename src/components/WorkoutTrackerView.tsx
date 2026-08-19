@@ -2425,7 +2425,7 @@ export function WorkoutTrackerView({
           <div className="flex items-center justify-between lg:justify-start w-full lg:w-auto gap-2 sm:gap-3 shrink-0">
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               {/* Left: Client & Trainer Identity */}
-              <div className="flex flex-col min-w-0 max-w-[130px] sm:max-w-[200px] lg:max-w-[220px]">
+              <div className="flex flex-col min-w-0 max-w-32.5 sm:max-w-50 lg:max-w-55">
                 <h3 className="text-xs sm:text-sm lg:text-base font-bold tracking-tight text-slate-900 dark:text-white truncate">
                   {selectedClient
                     ? `${selectedClient.firstName} ${selectedClient.lastName}`

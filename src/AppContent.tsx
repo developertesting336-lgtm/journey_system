@@ -472,6 +472,10 @@ export default function AppContent({
   const [newClientOnboardingName, setNewClientOnboardingName] = useState<
     string | null
   >(null);
+  const [pendingLinkSchedule, setPendingLinkSchedule] = useState<{
+    scheduleId: string;
+    clientName: string;
+  } | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClientDoc, setSelectedClientDoc] = useState<Client | null>(
     null,
@@ -1436,16 +1440,38 @@ export default function AppContent({
         clients={clients}
         studios={studios}
         initialName={newClientOnboardingName}
-        onClientCreated={(clientId, routeToImporter) => {
+        onClientCreated={async (clientId, routeToImporter) => {
           setSelectedClientId(clientId);
           setNewClientOnboardingName(null);
+
+          // Auto-link the schedule and set mindbody_name if created from an unlinked reservation
+          if (pendingLinkSchedule) {
+            try {
+              await Promise.all([
+                updateDoc(doc(db, "schedules", pendingLinkSchedule.scheduleId), {
+                  clientId,
+                }),
+                updateDoc(doc(db, "clients", clientId), {
+                  mindbody_name: pendingLinkSchedule.clientName,
+                }),
+              ]);
+            } catch (err) {
+              console.error("Failed to auto-link schedule to new client:", err);
+            } finally {
+              setPendingLinkSchedule(null);
+            }
+          }
+
           if (routeToImporter) {
             setCurrentView("chart-importer");
           } else {
             setCurrentView("profile");
           }
         }}
-        onClose={() => setNewClientOnboardingName(null)}
+        onClose={() => {
+          setNewClientOnboardingName(null);
+          setPendingLinkSchedule(null);
+        }}
       />
     );
   }
@@ -1643,7 +1669,12 @@ export default function AppContent({
                   setSelectedClientId(id);
                   setView("profile");
                 }}
-                onStartNewClientOnboarding={setNewClientOnboardingName}
+                onStartNewClientOnboarding={(name, scheduleInfo) => {
+                  setNewClientOnboardingName(name);
+                  if (scheduleInfo) {
+                    setPendingLinkSchedule(scheduleInfo);
+                  }
+                }}
                 setView={setView}
                 schedules={schedules}
                 sessions={sessions}

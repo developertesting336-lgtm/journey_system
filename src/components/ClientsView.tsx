@@ -88,7 +88,7 @@ export function ClientsView({
   activeStudioId: string;
   authTrainer: Trainer | null;
   onSelectClient: (id: string) => void;
-  onStartNewClientOnboarding?: (name: string) => void;
+  onStartNewClientOnboarding?: (name: string, scheduleInfo?: { scheduleId: string; clientName: string }) => void;
   setView: (v: View) => void;
   schedules: any[];
   sessions: WorkoutSession[];
@@ -1837,6 +1837,12 @@ export function ClientsView({
                   if (onStartNewClientOnboarding) {
                     onStartNewClientOnboarding(
                       linkingSession?.clientName || "",
+                      linkingSession?.id
+                        ? {
+                            scheduleId: linkingSession.id,
+                            clientName: linkingSession.clientName || "",
+                          }
+                        : undefined,
                     );
                   }
                   setIsLinking(false);
