@@ -172,8 +172,23 @@ async function startServer() {
   });
 
   app.post("/api/log-error", (req, res) => {
+    // Always goes to stdout, which is what the hosting platform captures.
     console.log("CLIENT ERROR:", req.body);
-    fs.appendFileSync("client-errors.log", JSON.stringify(req.body) + "\n");
+
+    // The file copy is a local-development convenience only. It used to be a
+    // bare appendFileSync: one unhandled throw (read-only or full disk) returned
+    // a 500, and a client error storm — the Firestore assertion bug produced
+    // 3,664 in one session — blocked the single Node thread on every write,
+    // which stalls the whole server.
+    if (process.env.NODE_ENV !== "production") {
+      fs.appendFile(
+        "client-errors.log",
+        JSON.stringify(req.body) + "\n",
+        (err) => {
+          if (err) console.warn("Could not write client-errors.log:", err.message);
+        },
+      );
+    }
     res.json({ ok: true });
   });
 
