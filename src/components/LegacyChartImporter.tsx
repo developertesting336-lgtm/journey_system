@@ -539,6 +539,13 @@ export function LegacyChartImporter({ clients, machines, trainers, initialClient
       };
 
       const sortedSess = [...sessionsToImport].sort((a, b) => (a.sessionNumber || 0) - (b.sessionNumber || 0));
+      if (sortedSess.length > 0) {
+        const latestSess = sortedSess[sortedSess.length - 1];
+        if (latestSess.date) {
+          clientUpdateObj.lastSessionDate = latestSess.date;
+          clientUpdateObj.lastWorkoutDate = latestSess.date;
+        }
+      }
       for (const vSess of sortedSess) {
         let sessDate: any = serverTimestamp();
         if (vSess.date) {

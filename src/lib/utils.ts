@@ -245,49 +245,76 @@ export function orderMachineSettings(
 ): [string, string, string][] {
   const mergedSettings: Record<string, string> = {};
 
-  // 0. Pre-clean and normalize keys (handle legacy "PROJECT-GAP: 6" or "RAWSETTINGS" artifacts)
-  Object.entries(settings || {}).forEach(([rawK, rawV]) => {
-    if (!rawK || rawV === undefined || rawV === null) return;
-    
-    let cleanK = rawK.trim();
-    // Remove "PROJECT-", "PROJECT_", "PROJECT " prefixes
-    cleanK = cleanK.replace(/^PROJECT[-_\s]+/i, '');
+  const normalizeKey = (k: string): string => {
+    const clean = k.trim().replace(/^PROJECT[-_\s]+/i, '');
+    const lower = clean.toLowerCase();
+    if (lower === 'seat' || lower === 's') return 'Seat';
+    if (lower === 'gap' || lower === 'g') return 'Gap';
+    if (lower === 'backpad' || lower === 'back pad' || lower === 'b' || lower === 'back') return 'Back Pad';
+    if (lower === 'chestpad' || lower === 'chest pad' || lower === 'chest') return 'Chest Pad';
+    if (lower === 'handles' || lower === 'handle' || lower === 'h') return 'Handles';
+    if (lower === 'armpad' || lower === 'arm pad' || lower === 'a') return 'Arm Pad';
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  };
 
-    // Handle stringified JSON in rawSettings or value
-    if (cleanK.toLowerCase().includes('rawsettings') || (typeof rawV === 'string' && rawV.trim().startsWith('{'))) {
-      try {
-        const parsed = typeof rawV === 'string' && rawV.trim().startsWith('{') ? JSON.parse(rawV) : (typeof rawV === 'object' ? rawV : null);
-        if (parsed && typeof parsed === 'object') {
-          Object.entries(parsed).forEach(([innerK, innerV]) => {
-            if (innerK && innerV !== undefined && innerV !== null) {
-              const safeInnerK = innerK.replace(/^PROJECT[-_\s]+/i, '');
-              mergedSettings[safeInnerK] = String(innerV);
+  const processEntry = (k: string, v: any) => {
+    if (!k || v === undefined || v === null) return;
+    const strV = String(v).trim();
+    if (!strV) return;
+
+    // Check if strV contains embedded "PROJECT-" tokens or JSON like "6 PROJECT-GAP:6"
+    if (/PROJECT[-_\s]+/i.test(strV)) {
+      const parts = strV.split(/PROJECT[-_\s]+/i);
+      parts.forEach((part, index) => {
+        const trimmed = part.trim();
+        if (!trimmed) return;
+        if (index === 0) {
+          processEntry(k, trimmed);
+        } else {
+          if (trimmed.includes(':')) {
+            const colonIdx = trimmed.indexOf(':');
+            const subK = trimmed.substring(0, colonIdx).trim();
+            const subV = trimmed.substring(colonIdx + 1).trim();
+            if (subK.toLowerCase().includes('rawsettings') || subV.startsWith('{')) {
+              try {
+                const match = subV.match(/\{.*\}/);
+                const jsonStr = match ? match[0] : subV;
+                const parsed = JSON.parse(jsonStr);
+                Object.entries(parsed).forEach(([innerK, innerV]) => processEntry(innerK, innerV));
+              } catch {}
+            } else {
+              processEntry(subK, subV);
             }
-          });
-          return;
+          } else {
+            const spaceMatch = trimmed.match(/^([a-zA-Z]+)[\s=]+(.+)$/);
+            if (spaceMatch) {
+              processEntry(spaceMatch[1], spaceMatch[2]);
+            }
+          }
         }
-      } catch {
-        // if JSON parse fails, continue
-      }
-      if (cleanK.toLowerCase().includes('rawsettings')) return; // skip rawsettings key if unparseable
+      });
+      return;
     }
 
-    // Map common names to clean labels
-    const lowerK = cleanK.toLowerCase();
-    if (lowerK === 'seat' || lowerK === 's') cleanK = 'Seat';
-    else if (lowerK === 'gap' || lowerK === 'g') cleanK = 'Gap';
-    else if (lowerK === 'backpad' || lowerK === 'back pad' || lowerK === 'b' || lowerK === 'back') cleanK = 'Back Pad';
-    else if (lowerK === 'chestpad' || lowerK === 'chest pad' || lowerK === 'chest') cleanK = 'Chest Pad';
-    else if (lowerK === 'handles' || lowerK === 'handle' || lowerK === 'h') cleanK = 'Handles';
-    else if (lowerK === 'armpad' || lowerK === 'arm pad' || lowerK === 'a') cleanK = 'Arm Pad';
-    else cleanK = cleanK.charAt(0).toUpperCase() + cleanK.slice(1);
-
-    // Skip garbage noise words as values
-    const strV = String(rawV).trim();
-    const noiseWords = ['PROJECT', 'CONFIRM', 'UNKNOWN', 'LEGACY', 'CHART', 'NULL', 'UNDEFINED'];
-    if (!noiseWords.includes(strV.toUpperCase()) && !strV.startsWith('{')) {
-      mergedSettings[cleanK] = strV;
+    // If strV is a JSON string
+    if (strV.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(strV);
+        Object.entries(parsed).forEach(([innerK, innerV]) => processEntry(innerK, innerV));
+        return;
+      } catch {}
     }
+
+    const finalK = normalizeKey(k);
+    const noiseWords = ['PROJECT', 'CONFIRM', 'UNKNOWN', 'LEGACY', 'CHART', 'NULL', 'UNDEFINED', 'RAWSETTINGS'];
+    if (!noiseWords.includes(strV.toUpperCase()) && !strV.startsWith('{') && strV.length <= 10) {
+      mergedSettings[finalK] = strV;
+    }
+  };
+
+  // Process all incoming raw settings
+  Object.entries(settings || {}).forEach(([rawK, rawV]) => {
+    processEntry(rawK, rawV);
   });
   
   // 1. If options are provided, normalize "Back/Chest Pad" key mismatches dynamically

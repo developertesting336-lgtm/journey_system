@@ -250,6 +250,10 @@ export function ClientDirectoryView({
     return () => clearTimeout(delayDebounceFn);
   }, [searchTerm, isGlobalSearch, activeStudioId]);
 
+  const [clientLastSessionMap, setClientLastSessionMap] = useState<
+    Record<string, string>
+  >({});
+
   const displayClients = useMemo(() => {
     // 1. Studio filtering
     const allowedStudioIds = [
@@ -307,6 +311,41 @@ export function ClientDirectoryView({
     authTrainer,
     dbSearchResults,
   ]);
+
+  React.useEffect(() => {
+    const clientsMissingDate = displayClients.filter(
+      (c) => c.id && !c.lastSessionDate && !clientLastSessionMap[c.id],
+    );
+    if (clientsMissingDate.length === 0) return;
+
+    const idsToFetch = clientsMissingDate.slice(0, 30).map((c) => c.id!);
+
+    const fetchLastSessions = async () => {
+      try {
+        const q = query(
+          collection(db, "sessions"),
+          where("clientId", "in", idsToFetch),
+          limit(100),
+        );
+        const snap = await getDocs(q);
+        const map: Record<string, string> = {};
+        snap.docs.forEach((d) => {
+          const s = d.data();
+          if (s.clientId && s.date) {
+            if (!map[s.clientId] || s.date > map[s.clientId]) {
+              map[s.clientId] = s.date;
+            }
+          }
+        });
+        if (Object.keys(map).length > 0) {
+          setClientLastSessionMap((prev) => ({ ...prev, ...map }));
+        }
+      } catch (err) {
+        console.error("Could not fetch last sessions for clients:", err);
+      }
+    };
+    fetchLastSessions();
+  }, [displayClients, clientLastSessionMap]);
 
   const renderTierBadge = (tier?: string) => {
     if (!tier || tier === "None")
@@ -495,7 +534,29 @@ export function ClientDirectoryView({
                       </td>
                       <td className="py-4 px-6 align-middle">
                         <span className="text-sm text-muted-foreground">
-                          {(client as any).lastSessionDate || "N/A"}
+                          {(() => {
+                            const c = client as any;
+                            if (c.lastSessionDate) return c.lastSessionDate;
+                            if (c.id && clientLastSessionMap[c.id])
+                              return clientLastSessionMap[c.id];
+                            if (c.lastWorkoutDate) return c.lastWorkoutDate;
+                            if (c.currentMachineMetrics) {
+                              const dates = Object.values(c.currentMachineMetrics)
+                                .map((m: any) => {
+                                  if (!m?.lastPerformedDate) return null;
+                                  if (typeof m.lastPerformedDate === "string") return m.lastPerformedDate;
+                                  if (m.lastPerformedDate?.toDate) return m.lastPerformedDate.toDate().toISOString().split("T")[0];
+                                  if (m.lastPerformedDate instanceof Date) return m.lastPerformedDate.toISOString().split("T")[0];
+                                  return null;
+                                })
+                                .filter(Boolean) as string[];
+                              if (dates.length > 0) {
+                                dates.sort();
+                                return dates[dates.length - 1];
+                              }
+                            }
+                            return "N/A";
+                          })()}
                         </span>
                       </td>
                       <td className="py-4 px-6 align-middle">

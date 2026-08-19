@@ -1831,9 +1831,49 @@ export function ClientProfileView({
                 if (!machine) return null;
 
                 const metric = client?.currentMachineMetrics?.[machineId];
-                const weightVal = metric?.weight || "--";
-                const repsVal = metric?.reps || metric?.seconds || "--";
-                const isHold = metric?.isStaticHold;
+                const latestSessionWithLog = sessions.find((s) =>
+                  allLogs?.some(
+                    (l) => l.sessionId === s.id && l.machineId === machineId,
+                  ),
+                );
+                const latestLog = latestSessionWithLog
+                  ? allLogs.find(
+                      (l) =>
+                        l.sessionId === latestSessionWithLog.id &&
+                        l.machineId === machineId,
+                    )
+                  : allLogs
+                      ?.filter((l) => l.machineId === machineId)
+                      ?.sort((a, b) => {
+                        const sessA = sessions.find((s) => s.id === a.sessionId);
+                        const sessB = sessions.find((s) => s.id === b.sessionId);
+                        const numA =
+                          sessA?.sessionNumber ??
+                          parseSessionDate(sessA?.date || "");
+                        const numB =
+                          sessB?.sessionNumber ??
+                          parseSessionDate(sessB?.date || "");
+                        return numB - numA;
+                      })[0];
+
+                const weightVal =
+                  metric?.weight ||
+                  latestLog?.weight ||
+                  latestLog?.loadLb ||
+                  clientSettings[machineId]?.currentWeight ||
+                  clientSettings[machineId]?.startingWeight ||
+                  "--";
+                const repsVal =
+                  metric?.reps ||
+                  metric?.seconds ||
+                  latestLog?.reps ||
+                  latestLog?.seconds ||
+                  latestLog?.outcomeTut ||
+                  "--";
+                const isHold =
+                  metric?.isStaticHold ??
+                  latestLog?.isStaticHold ??
+                  latestLog?.isTSC;
 
                 return (
                   <div

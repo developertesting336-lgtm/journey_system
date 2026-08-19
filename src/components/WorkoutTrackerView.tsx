@@ -2421,27 +2421,27 @@ export function WorkoutTrackerView({
       {/* Persistent Active Header - Refactored as Sticky Fixed */}
       {(selectedClient || currentSession) && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-white/95 dark:bg-bg-dark/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-3 sm:px-4 lg:px-6 py-2 sm:py-2.5 lg:py-3 flex flex-col lg:flex-row lg:items-center justify-between min-h-25 lg:h-19 shadow-md transition-all gap-2 lg:gap-0">
-          {/* Row 1 on mobile & tablet, left block on desktop */}
-          <div className="flex items-center justify-between w-full lg:w-auto gap-2 sm:gap-3">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* Mobile & Tablet: Row 1 (Identity & Timer), Desktop: Left Column */}
+          <div className="flex items-center justify-between lg:justify-start w-full lg:w-auto gap-2 sm:gap-3 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               {/* Left: Client & Trainer Identity */}
-              <div className="flex flex-col min-w-0 max-w-32.5 sm:max-w-xs">
-                <h3 className="text-sm sm:text-base md:text-lg lg:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
+              <div className="flex flex-col min-w-0 max-w-[130px] sm:max-w-[200px] lg:max-w-[220px]">
+                <h3 className="text-xs sm:text-sm lg:text-base font-bold tracking-tight text-slate-900 dark:text-white truncate">
                   {selectedClient
                     ? `${selectedClient.firstName} ${selectedClient.lastName}`
                     : currentSession?.isUnassigned
                       ? "Unassigned Tracking"
                       : "Initializing..."}
                 </h3>
-                <div className="flex items-center gap-1.5 mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                  <div className="w-4.5 h-4.5 sm:w-5 sm:h-5 rounded-full bg-white dark:bg-bg-dark flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm shrink-0">
-                    <span className="text-[10px] sm:text-[11px] font-bold">
+                <div className="flex items-center gap-1 mt-0.5 text-[10px] sm:text-xs font-medium text-slate-500 dark:text-slate-400">
+                  <div className="w-4 h-4 sm:w-4.5 sm:h-4.5 rounded-full bg-white dark:bg-bg-dark flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm shrink-0">
+                    <span className="text-[9px] sm:text-[10px] font-bold">
                       {authTrainer?.initials ||
                         currentSession?.trainerInitials ||
                         "??"}
                     </span>
                   </div>
-                  Trainer
+                  <span className="truncate">Trainer</span>
                 </div>
               </div>
 
@@ -2450,14 +2450,14 @@ export function WorkoutTrackerView({
                 variant="outline"
                 size="sm"
                 onClick={() => setIsShowingSessionNotes(true)}
-                className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-7 sm:h-8 px-2 sm:px-2.5 rounded-lg text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-7 sm:h-8 px-2 sm:px-2.5 rounded-lg text-[10px] sm:text-[11px] flex items-center gap-1 transition-colors cursor-pointer shrink-0"
               >
-                <MessageSquare className="w-3 h-3 text-cta shrink-0 fill-current" />
+                <MessageSquare className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-cta shrink-0 fill-current" />
                 Notes
               </Button>
             </div>
 
-            {/* Mobile & Tablet Timer: display timer next to client name on screens < lg */}
+            {/* Mobile & Tablet Timer on right side of Row 1 */}
             <div className="flex lg:hidden items-center shrink-0">
               {currentSession && currentSession.startTime && (
                 <ActiveSessionTimer
@@ -2470,8 +2470,8 @@ export function WorkoutTrackerView({
             </div>
           </div>
 
-          {/* Desktop Center: Focal Clock only on large screens (lg:) with space */}
-          <div className="hidden lg:flex flex-col items-center absolute left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+          {/* Desktop Center Timer: Non-colliding flex child */}
+          <div className="hidden lg:flex items-center justify-center shrink-0 mx-2">
             {currentSession && currentSession.startTime && (
               <ActiveSessionTimer
                 startTime={currentSession.startTime}
@@ -2481,43 +2481,43 @@ export function WorkoutTrackerView({
             )}
           </div>
 
-          {/* Row 2 on mobile & tablet, right block on desktop */}
-          <div className="flex items-center justify-between lg:justify-end gap-1.5 sm:gap-2 w-full lg:w-auto shrink-0 z-50">
+          {/* Action Buttons: Row 2 on mobile, Right side on desktop */}
+          <div className="flex items-center justify-end gap-1 sm:gap-2 w-full lg:w-auto shrink-0">
             <Button
               variant="outline"
               className={cn(
-                "border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm transition-colors flex-1 lg:flex-initial",
+                "border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-7 sm:h-8.5 lg:h-9 px-2 sm:px-3 text-[10px] sm:text-xs font-semibold transition-colors flex-1 lg:flex-initial",
                 !showAllMachines
                   ? "bg-cta text-white hover:opacity-90 dark:text-white border-transparent"
                   : "",
               )}
               onClick={() => setShowAllMachines(!showAllMachines)}
             >
-              <LayoutList className="w-3.5 h-3.5 sm:mr-1" />
+              <LayoutList className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-1" />
               <span>Focus</span>
             </Button>
 
             <Button
               variant="outline"
-              className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm transition-colors flex-1 lg:flex-initial"
+              className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-surface-1 h-7 sm:h-8.5 lg:h-9 px-2 sm:px-3 text-[10px] sm:text-xs font-semibold transition-colors flex-1 lg:flex-initial"
               onClick={() => setIsSessionRoutineManagerOpen(true)}
             >
-              <Settings2 className="w-3.5 h-3.5 sm:mr-1" />
+              <Settings2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-1" />
               <span>Routine</span>
             </Button>
 
             <Button
               variant="outline"
-              className="border-red-500/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 h-8 sm:h-9 lg:h-10 px-2 sm:px-3 text-[11px] sm:text-xs lg:text-sm font-bold uppercase tracking-wider transition-colors flex-1 lg:flex-initial"
+              className="border-red-500/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 h-7 sm:h-8.5 lg:h-9 px-2 sm:px-3 text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-colors flex-1 lg:flex-initial"
               onClick={() => setShowCancelConfirmation(true)}
               title="Discard active session without saving"
             >
-              <Trash2 className="w-3.5 h-3.5 sm:mr-1" />
+              <Trash2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-1" />
               <span>Discard</span>
             </Button>
 
             <Button
-              className="bg-cta hover:opacity-90 text-white font-semibold shadow-sm transition-all h-8 sm:h-9 lg:h-10 px-2.5 sm:px-4 lg:px-6 rounded-lg text-[11px] sm:text-xs lg:text-sm flex-1 lg:flex-initial cursor-pointer whitespace-nowrap"
+              className="bg-cta hover:opacity-90 text-white font-bold shadow-sm transition-all h-7 sm:h-8.5 lg:h-9 px-2.5 sm:px-4 lg:px-5 rounded-lg text-[10px] sm:text-xs flex-1 lg:flex-initial cursor-pointer whitespace-nowrap"
               onClick={handleEndSessionPress}
             >
               <span>Finish</span>
@@ -3624,7 +3624,7 @@ export function WorkoutTrackerView({
         !editingWeightMachineId &&
         !editingSettingsMachineId &&
         !isShowingSessionNotes && (
-          <div className="fixed bottom-20 left-0 right-0 z-110">
+          <div className="fixed bottom-16 sm:bottom-20 left-0 right-0 z-110">
             <Stopwatch onLogTSC={handleLogTSC} />
           </div>
         )}
