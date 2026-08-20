@@ -83,6 +83,12 @@ import {
 
 import { useActiveStudio } from "../ActiveStudioContext";
 import { Stopwatch } from "./Stopwatch";
+import { useToast } from "../contexts/ToastContext";
+import {
+  hasCount,
+  hasRequiredCount,
+  findIncompleteLogs,
+} from "../lib/log-validation";
 import { ActiveSessionTimer } from "./ActiveSessionTimer";
 import { SessionRoutineManagerModal } from "./SessionRoutineManagerModal";
 import { SessionNotesSidebar } from "./SessionNotesSidebar";
@@ -319,6 +325,10 @@ function PerformanceEntryDialog({
       ? parseFloat(currentWeight)
       : parseFloat(prevWeight) || 0;
 
+  // Deliberately NOT seeded from the previous session. Weight carries forward
+  // because a starting load is a setting; a rep or second count is a measurement
+  // and must come from this set. Last session's number appears only as a greyed
+  // placeholder, and `canSave` below refuses to store an empty field.
   const initialReps = currentReps !== "" ? parseFloat(currentReps) : "";
   const initialRepsRight =
     currentRepsRight !== undefined && currentRepsRight !== ""
@@ -343,11 +353,44 @@ function PerformanceEntryDialog({
     return parseFloat(prevValStr) || 0;
   };
 
+  /**
+   * A set is only saveable with a quality *and* an actual rep/second count.
+   * Previously only quality was required, so a blank field saved an empty value
+   * that rendered as "s" with no number and scored zero toward the client's
+   * lifetime volume.
+   */
+  const countsEntered = isTorsoFull
+    ? hasCount(reps) && hasCount(repsRt)
+    : hasCount(reps);
+  const canSave = Boolean(quality) && quality !== 0 && countsEntered;
+
+  const saveLabel = !countsEntered
+    ? isHold
+      ? "Enter Seconds To Save"
+      : "Enter Reps To Save"
+    : !quality || quality === 0
+      ? "Select Quality To Save"
+      : "Save Set";
+
   const prevRepsLeftPlaceholder = isHold
     ? prevLog?.seconds || ""
     : prevLog?.reps || "";
   const prevRepsRightPlaceholder =
     (prevLog as any)?.repsRight || prevRepsLeftPlaceholder;
+
+  /**
+   * Reps and seconds are different units — 8 reps is not 8 seconds — so switching
+   * mode re-seeds the field from that mode's own previous value rather than
+   * carrying the old number across.
+   */
+  const switchMode = (hold: boolean) => {
+    if (hold === isHold) return;
+    setIsHold(hold);
+    // Clear rather than carry the number across: the units are different, so a
+    // rep count left sitting in the seconds field would be saved as a duration.
+    setReps("");
+    if (isTorsoFull) setRepsRt("");
+  };
 
   const adjustReps = (amount: number) => {
     const base = getBaseReps(reps, prevRepsLeftPlaceholder);
@@ -475,13 +518,13 @@ function PerformanceEntryDialog({
             <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex flex-col items-center relative">
               <div className="flex items-center justify-center gap-1.5 bg-white dark:bg-bg-dark border border-slate-200 dark:border-slate-800 rounded-xl p-1 mb-2.5 w-full max-w-45">
                 <button
-                  onClick={() => setIsHold(false)}
+                  onClick={() => switchMode(false)}
                   className={`flex-1 h-6 rounded-lg font-black uppercase text-[11px] tracking-widest transition-all ${!isHold ? "bg-sky-500 text-slate-900 dark:text-white" : "text-slate-600 hover:text-slate-500 dark:text-slate-400"}`}
                 >
                   REPS
                 </button>
                 <button
-                  onClick={() => setIsHold(true)}
+                  onClick={() => switchMode(true)}
                   className={`flex-1 h-6 rounded-lg font-black uppercase text-[11px] tracking-widest transition-all ${isHold ? "bg-sky-500 text-slate-900 dark:text-white" : "text-slate-600 hover:text-slate-500 dark:text-slate-400"}`}
                 >
                   TSC
@@ -715,9 +758,9 @@ function PerformanceEntryDialog({
           </Button>
           <Button
             className="h-12 rounded-xl font-black uppercase text-[11px] tracking-widest bg-orange-500 dark:bg-orange-600 text-white hover:bg-orange-600 dark:hover:bg-orange-700 shadow-[0_4px_15px_rgba(240,108,34,0.4)] border-none active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
-            disabled={!quality || quality === 0}
+            disabled={!canSave}
             onClick={() => {
-              if (!quality || quality === 0) return;
+              if (!canSave) return;
               onSave(
                 current.toString(),
                 reps.toString(),
@@ -728,7 +771,7 @@ function PerformanceEntryDialog({
               );
             }}
           >
-            {quality ? "Save Set" : "Select Quality To Save"}
+            {saveLabel}
           </Button>
         </div>
       </DialogContent>
@@ -911,6 +954,19 @@ function ExerciseHistoryDialog({
   );
 }
 
+/** How long a locally-created session is protected from being cleared by a
+ *  snapshot that has not caught up with the write yet. */
+const JUST_STARTED_GRACE_MS = 15000;
+
+/** Milliseconds from a Firestore Timestamp, Date, or ISO string; null if absent. */
+function toMillisOrNull(value: any): number | null {
+  if (!value) return null;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  const ms = new Date(value).getTime();
+  return isNaN(ms) ? null : ms;
+}
+
 export function WorkoutTrackerView({
   clientId,
   clients,
@@ -958,6 +1014,7 @@ export function WorkoutTrackerView({
 }) {
   const { activeStudioId: contextActiveStudioId, activeStudio } =
     useActiveStudio();
+  const { error: toastError } = useToast();
   const [sessions, setSessions] = useState<WorkoutSession[]>([]);
   const [logs, setLogs] = useState<Record<string, ExerciseLog>>({});
   const [routines, setRoutines] = useState<Routine[]>([]);
@@ -1002,6 +1059,59 @@ export function WorkoutTrackerView({
     useState<RoutineType>("A");
   const [targetRoutine, setTargetRoutine] = useState<Routine | null>(null);
   const [isPaused, setIsPaused] = useState(false);
+
+  /**
+   * Pause/resume, recorded on the session document.
+   *
+   * Pausing stores the instant; resuming folds that span into totalPausedMs.
+   * Keeping it here rather than in component state means a refresh mid-pause no
+   * longer counts the break as training time.
+   */
+  const toggleSessionPause = async () => {
+    const session = currentSession;
+    if (!session?.id) {
+      setIsPaused((p) => !p);
+      return;
+    }
+
+    const pausedAtMs = toMillisOrNull(session.pausedAt);
+    const alreadyPaused = pausedAtMs !== null;
+
+    // Update locally first so the button responds immediately.
+    setIsPaused(!alreadyPaused);
+
+    const updates = alreadyPaused
+      ? {
+          pausedAt: null,
+          totalPausedMs:
+            (Number(session.totalPausedMs) || 0) +
+            Math.max(0, Date.now() - pausedAtMs),
+        }
+      : { pausedAt: Timestamp.now() };
+
+    setCurrentSession((prev) =>
+      prev && prev.id === session.id
+        ? ({ ...prev, ...updates } as WorkoutSession)
+        : prev,
+    );
+
+    try {
+      await updateDoc(doc(db, "sessions", session.id), updates);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, "sessions");
+    }
+  };
+
+  /**
+   * Set the instant a session is created locally. Firestore's snapshot can lag a
+   * beat behind the write, and without this the very next snapshot would report
+   * "no session in progress" and immediately clear the one just started.
+   */
+  const justStartedSessionRef = useRef<{
+    id: string;
+    clientId: string;
+    at: number;
+  } | null>(null);
 
   const [machineTimeElapsed, setMachineTimeElapsed] = useState<number>(0);
 
@@ -1184,6 +1294,13 @@ export function WorkoutTrackerView({
     }
   }, [logs, currentSession, activeMachineIds]);
 
+  // Mirror the session's persisted pause state into local state, so per-machine
+  // timing and the heartbeat also know the session is paused after a refresh.
+  useEffect(() => {
+    const paused = toMillisOrNull((currentSession as any)?.pausedAt) !== null;
+    setIsPaused((prev) => (prev === paused ? prev : paused));
+  }, [(currentSession as any)?.pausedAt, currentSession?.id]);
+
   useEffect(() => {
     if (!currentSession) return;
     if (isPaused) {
@@ -1268,25 +1385,25 @@ export function WorkoutTrackerView({
     }
 
     if (activeFocusMachineId) {
+      // Order matters. The dialog reads its starting value once, when it mounts,
+      // so the seconds have to be in `logs` before it opens. Previously the
+      // dialog was opened first and the writes followed behind four `await`s —
+      // each of which yields to the microtask queue — so the dialog mounted on
+      // the pre-write state and showed nothing.
+      //
+      // One combined write rather than four: updateLogMultiple also stamps a
+      // session heartbeat, so the old version fired four Firestore writes per
+      // logged hold.
+      if (seconds > 0) {
+        updateLogMultiple(currentSession.id, activeFocusMachineId, {
+          seconds: seconds.toString(),
+          reps: "0",
+          isTSC: true,
+          isStaticHold: true,
+        });
+      }
       setIsStaticHoldOverride(true);
       setEditingWeightMachineId(activeFocusMachineId);
-      if (seconds > 0) {
-        const key = `${currentSession.id}_${activeFocusMachineId}`;
-        await updateLog(
-          currentSession.id,
-          activeFocusMachineId,
-          "seconds",
-          seconds.toString(),
-        );
-        await updateLog(currentSession.id, activeFocusMachineId, "reps", "0");
-        await updateLog(currentSession.id, activeFocusMachineId, "isTSC", true);
-        await updateLog(
-          currentSession.id,
-          activeFocusMachineId,
-          "isStaticHold",
-          true,
-        );
-      }
     }
   };
   const [searchTerm, setSearchTerm] = useState("");
@@ -1436,18 +1553,23 @@ export function WorkoutTrackerView({
             setShowRoutinePicker(false);
             setIsPreSessionMode(false);
           } else {
-            // Guard against wiping a session that was just started locally
-            setCurrentSession((prev) => {
-              if (
-                prev &&
-                prev.status === "In-Progress" &&
-                (!prev.clientId || prev.clientId === clientId)
-              ) {
-                return prev;
-              }
+            // A session created a moment ago may not be in this snapshot yet, so
+            // hold onto it briefly. Bounded on purpose: the previous version kept
+            // *any* in-progress session forever, so one that had been completed or
+            // deleted elsewhere stayed pinned and blocked starting a new one.
+            const pending = justStartedSessionRef.current;
+            const stillSettling =
+              pending !== null &&
+              pending.clientId === clientId &&
+              Date.now() - pending.at < JUST_STARTED_GRACE_MS;
+
+            if (!stillSettling) {
+              justStartedSessionRef.current = null;
+              // Set outside a state updater — updaters must stay pure, and React
+              // invokes them twice under StrictMode.
+              setCurrentSession(null);
               setIsPreSessionMode(true);
-              return null;
-            });
+            }
           }
         },
         (error) => {
@@ -1738,12 +1860,27 @@ export function WorkoutTrackerView({
         startedByTrainerId: trainerId || "",
         lastHeartbeatAt: serverTimestamp(),
         status: "In-Progress",
+        // Timer bookkeeping lives on the document so elapsed time survives a
+        // refresh, a navigation, or moving to another device.
+        pausedAt: null,
+        totalPausedMs: 0,
+        // Client clock fallback: serverTimestamp() reads as null in the local
+        // snapshot until the server confirms, which left the timer frozen at
+        // 00:00 for that round trip.
+        clientStartTime: new Date().toISOString(),
         startTime: serverTimestamp(),
         createdAt: serverTimestamp(),
         ...(preSessionCheckIn ? { preSessionCheckIn } : {}),
       });
 
       const docRef = await addDoc(collection(db, "sessions"), sessionData);
+
+      // Protects this session from being cleared by a snapshot that predates it.
+      justStartedSessionRef.current = {
+        id: docRef.id,
+        clientId,
+        at: Date.now(),
+      };
 
       const clientUpdateData: any = {};
       if (routineType === "B" && !selectedClient?.isRoutineBActive) {
@@ -2024,6 +2161,26 @@ export function WorkoutTrackerView({
   };
 
   const handleEndSessionPress = () => {
+    // Last line of defence. Logs are only written to Firestore at completion, so
+    // this is the final chance to catch a set that was begun but never given a
+    // count — it would be stored looking complete and score zero volume.
+    const incomplete = findIncompleteLogs(logs);
+    if (incomplete.length > 0) {
+      const names = incomplete
+        .map(
+          (i) =>
+            machines.find((m) => m.id === i.machineId)?.name || i.machineId,
+        )
+        .filter(Boolean);
+      const unique = Array.from(new Set(names));
+      toastError(
+        `Add ${incomplete[0].reason === "missing-seconds" ? "a duration" : "reps"} for ${unique.join(", ")} before finishing. Sets without a count are recorded as zero.`,
+      );
+      setEditingWeightMachineId(incomplete[0].machineId);
+      setIsStaticHoldOverride(incomplete[0].reason === "missing-seconds");
+      return;
+    }
+
     if (currentSession?.id && !currentSession.endTime) {
       const now = new Date();
       updateDoc(doc(db, "sessions", currentSession.id), {
@@ -2087,6 +2244,37 @@ export function WorkoutTrackerView({
     side?: "Left" | "Right",
   ) => {
     updateLogMultiple(sessionId, machineId, { [field]: value }, side);
+  };
+
+  /**
+   * Setting a quality is what marks a set as done, so it must not be possible
+   * before a count exists. Tapping a quality dot on an empty row used to create
+   * a log with a weight and a quality but no reps or seconds — which reads as
+   * complete on screen and scores zero in the session rollup.
+   */
+  const setQualityWithGuard = (
+    sessionId: string,
+    machineId: string,
+    quality: number,
+    side?: "Left" | "Right",
+  ) => {
+    const key = `${sessionId}_${machineId}${side ? "_" + side : ""}`;
+    const log = logs[key];
+
+    if (!hasRequiredCount(log)) {
+      const needsSeconds = Boolean(log?.isStaticHold || log?.isTSC);
+      toastError(
+        needsSeconds
+          ? "Enter the hold duration before setting a quality."
+          : "Enter reps before setting a quality.",
+      );
+      // Open the entry dialog so the count can be filled in straight away.
+      setIsStaticHoldOverride(needsSeconds);
+      setEditingWeightMachineId(machineId);
+      return;
+    }
+
+    updateLog(sessionId, machineId, "repQuality", quality, side);
   };
 
   const updateLogMultiple = (
@@ -2459,11 +2647,13 @@ export function WorkoutTrackerView({
 
             {/* Mobile & Tablet Timer on right side of Row 1 */}
             <div className="flex lg:hidden items-center shrink-0">
-              {currentSession && currentSession.startTime && (
+              {currentSession && (
                 <ActiveSessionTimer
                   startTime={currentSession.startTime}
-                  paused={isPaused}
-                  onTogglePause={() => setIsPaused(!isPaused)}
+                  fallbackStartTime={(currentSession as any).clientStartTime}
+                  pausedAt={(currentSession as any).pausedAt}
+                  totalPausedMs={(currentSession as any).totalPausedMs}
+                  onTogglePause={toggleSessionPause}
                   isMobile
                 />
               )}
@@ -2472,11 +2662,13 @@ export function WorkoutTrackerView({
 
           {/* Desktop Center Timer: Non-colliding flex child */}
           <div className="hidden lg:flex items-center justify-center shrink-0 mx-2">
-            {currentSession && currentSession.startTime && (
+            {currentSession && (
               <ActiveSessionTimer
                 startTime={currentSession.startTime}
-                paused={isPaused}
-                onTogglePause={() => setIsPaused(!isPaused)}
+                fallbackStartTime={(currentSession as any).clientStartTime}
+                pausedAt={(currentSession as any).pausedAt}
+                totalPausedMs={(currentSession as any).totalPausedMs}
+                onTogglePause={toggleSessionPause}
               />
             )}
           </div>
@@ -3497,10 +3689,9 @@ export function WorkoutTrackerView({
                                           key={v}
                                           onClick={() =>
                                             currentSession?.id &&
-                                            updateLog(
+                                            setQualityWithGuard(
                                               currentSession.id,
                                               machine.id!,
-                                              "repQuality",
                                               v,
                                               "Left",
                                             )
@@ -3531,10 +3722,9 @@ export function WorkoutTrackerView({
                                           key={v}
                                           onClick={() =>
                                             currentSession?.id &&
-                                            updateLog(
+                                            setQualityWithGuard(
                                               currentSession.id,
                                               machine.id!,
-                                              "repQuality",
                                               v,
                                               "Right",
                                             )
@@ -3568,10 +3758,9 @@ export function WorkoutTrackerView({
                                         key={v}
                                         onClick={() => {
                                           if (currentSession?.id) {
-                                            updateLog(
+                                            setQualityWithGuard(
                                               currentSession.id,
                                               machine.id!,
-                                              "repQuality",
                                               v,
                                             );
                                           }

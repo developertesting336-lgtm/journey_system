@@ -60,10 +60,28 @@ export type DateLike =
 export function toDate(value: DateLike): Date | null {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
-  if (typeof value === "object" && typeof (value as any).toDate === "function") {
-    const d = (value as any).toDate();
-    return d instanceof Date && !isNaN(d.getTime()) ? d : null;
+
+  if (typeof value === "object") {
+    const obj = value as any;
+    if (typeof obj.toDate === "function") {
+      const d = obj.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d : null;
+    }
+    if (typeof obj.toMillis === "function") {
+      const ms = obj.toMillis();
+      return typeof ms === "number" && !isNaN(ms) ? new Date(ms) : null;
+    }
+    // A Timestamp that lost its prototype — after cache rehydration or any
+    // structured copy — arrives as a bare {seconds, nanoseconds}. Passing that
+    // to `new Date()` yields Invalid Date, which is how "INVALID DATE" reached
+    // the session grid.
+    if (typeof obj.seconds === "number") {
+      const ms = obj.seconds * 1000 + (obj.nanoseconds ?? 0) / 1e6;
+      return isNaN(ms) ? null : new Date(ms);
+    }
+    return null;
   }
+
   const d = new Date(value as string | number);
   return isNaN(d.getTime()) ? null : d;
 }

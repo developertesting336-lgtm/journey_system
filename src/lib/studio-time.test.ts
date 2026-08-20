@@ -69,6 +69,31 @@ describe("toDate", () => {
     expect(toDate(undefined)).toBeNull();
     expect(toDate("not a date")).toBeNull();
   });
+
+  it("reads a Timestamp that lost its prototype", () => {
+    // {seconds, nanoseconds} with no methods — the shape that rendered
+    // "INVALID DATE" in the session grid.
+    expect(toDate({ seconds: 1787000000, nanoseconds: 0 } as any)?.getTime()).toBe(
+      1787000000000,
+    );
+  });
+
+  it("reads a Timestamp exposing only toMillis", () => {
+    expect(toDate({ toMillis: () => 1787000000000 } as any)?.getTime()).toBe(
+      1787000000000,
+    );
+  });
+
+  it("returns null for an object with no usable time at all", () => {
+    expect(toDate({} as any)).toBeNull();
+    expect(toDate({ foo: "bar" } as any)).toBeNull();
+  });
+
+  it("formats a prototype-less Timestamp rather than 'Invalid Date'", () => {
+    const stripped = { seconds: 1787000000, nanoseconds: 0 } as any;
+    expect(formatStudioTime(stripped, ET)).not.toContain("Invalid");
+    expect(formatStudioTime({} as any, ET, "")).toBe("");
+  });
 });
 
 describe("studio calendar day", () => {

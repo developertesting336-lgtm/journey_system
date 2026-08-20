@@ -440,6 +440,12 @@ export interface WorkoutSession {
   };
   startTime?: any;
   endTime?: any;
+  /** Client-clock start, used while `startTime`'s serverTimestamp() is pending. */
+  clientStartTime?: string;
+  /** When the current pause began; null/absent while the session is running. */
+  pausedAt?: any;
+  /** Milliseconds accumulated across completed pauses. */
+  totalPausedMs?: number;
   status: "In-Progress" | "Completed";
   clientAge?: number;
   clientOccupation?: string;

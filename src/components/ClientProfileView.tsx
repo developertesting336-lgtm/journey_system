@@ -19,7 +19,7 @@ import {
   startAfter,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { studioHour } from "../lib/studio-time";
+import { studioHour, formatStudioTime } from "../lib/studio-time";
 import {
   User,
   Phone,
@@ -3088,14 +3088,7 @@ export function ClientProfileView({
                               s.trainerInitials === "Legacy" ||
                               s.trainerInitials === "Chart"
                                 ? "Imported"
-                                : s.startTime
-                                  ? new Date(
-                                      s.startTime?.toMillis?.() || s.startTime,
-                                    ).toLocaleTimeString("en-US", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })
-                                  : ""}
+                                : formatStudioTime(s.startTime, undefined, "")}
                             </span>
                             {s.trainerInitials && (
                               <div
