@@ -371,7 +371,7 @@ export function BriefingScreen({
         />
 
         <div className="flex-1 overflow-y-auto no-scrollbar relative z-10 flex flex-col">
-          <div className="px-3.5 sm:px-5 lg:px-6 py-4 sm:py-5 flex-1 flex flex-col gap-3.5 sm:gap-4 pb-60">
+          <div className="px-3.5 sm:px-5 lg:px-6 py-4 sm:py-5 flex-1 flex flex-col gap-3.5 sm:gap-4 pb-4">
             {/* 2. Client hero card */}
             <div className="rounded-2xl p-4 border border-cyan/30 shadow-sm relative overflow-hidden bg-white dark:bg-slate-900 dark:border-slate-800">
               <div className="flex justify-between items-start relative z-10">
@@ -780,14 +780,20 @@ export function BriefingScreen({
           </div>
         </div>
 
-        <StickyCTA
-          label="START SESSION"
-          icon={
+        <div
+          className="shrink-0 px-6 pb-4 pt-3 z-20"
+          style={{
+            background: 'linear-gradient(to top, var(--bg-dark) 60%, rgba(13,26,43,0) 100%)'
+          }}
+        >
+          <button
+            onClick={handleStart}
+            className="w-full h-[60px] min-h-[44px] rounded-[30px] font-display italic text-[18px] uppercase tracking-wide bg-gradient-to-br from-cta to-cta-strong text-white shadow-[0_4px_24px_rgba(243,116,39,0.3)] hover:shadow-[0_6px_32px_rgba(243,116,39,0.4)] border border-white/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
             <div className="w-0 h-0 border-t-[5px] border-t-transparent border-l-8 border-l-white border-b-[5px] border-b-transparent mr-1" />
-          }
-          onClick={handleStart}
-          className="mb-20 sm:mb-24"
-        />
+            START SESSION
+          </button>
+        </div>
       </div>
     </div>
   );
